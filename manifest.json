@@ -1,0 +1,23 @@
+{
+    "manifest_version": 3,
+    "name": "Asistente inteligente de accesibilidad web",
+    "version": "0.1",
+    "description": "Prototipo para mejorar la accesibilidad en páginas web con IA",
+    "permissions": [
+        "activeTab"
+    ],
+    "host_permissions": [
+        "https://generativelanguage.googleapis.com/*",
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "back.js"
+    },
+    "content_scripts": 
+    [
+        {
+            "matches": ["<all_urls>"],
+            "js": ["content.js"]
+        }
+    ]
+}
