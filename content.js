@@ -126,10 +126,11 @@ async function procesarImagenesSinAlt() {
 //procesamiento de elementos interactivos sin aria-label
 
 async function procesarElementosInteractivos() {
-    const elementosBotonesEnlaces = document.querySelectorAll("button, a");
+    const elementosBotonesEnlacesPestañasMenu = "button, a, [role='button'], [role='link'], [role='tab'], [role='menuitem']";
+    const elementosInteractivos = document.querySelectorAll(elementosBotonesEnlacesPestañasMenu);
     
     //Filtrar los que no tienen texto accesible
-    const elementosInaccesibles = Array.from(elementosBotonesEnlaces).filter(el => {
+    const elementosInaccesibles = Array.from(elementosInteractivos).filter(el => {
         const tieneTextoVisible = el.innerText && el.innerText.trim().length > 0;
         const tieneAriaLabel = el.hasAttribute("aria-label") && el.getAttribute("aria-label").trim().length > 0;
         const tieneAriaLabelBy = el.hasAttribute("aria-labelledby");
@@ -157,6 +158,7 @@ async function procesarElementosInteractivos() {
         try {
             const elementInfo = {
                 tagName: el.tagName.toLowerCase(),
+                role : el.getAttribute("role") || null,
                 className: el.className,
                 id: el.id,
                 href: el.href || null,
@@ -183,10 +185,16 @@ async function procesarElementosInteractivos() {
         } catch (error) {
             console.error(`Error generando aria-label para elemento ${i + 1}:`, error.message);
             let fallbackLabel = "Elemento interactivo sin descripción accesible";
-            if (el.tagName.toLowerCase() === "button") {
+            const tag = el.tagName.toLowerCase();
+            const role = el.getAttribute("role");
+            if (tag === "button"||role==="button") {
                 fallbackLabel = "Botón sin etiqueta accesible";
-            } else if (el.tagName.toLowerCase() === "a") {
+            } else if (tag === "a"||role==="link") {
                 fallbackLabel = "Enlace sin texto accesible";
+            }else if (role === "tab") {
+                fallbackLabel = "Pestaña sin título accesible";
+            }else if (role === "menuitem") {
+                fallbackLabel = "Menú sin descripción accesible";
             }
             el.setAttribute("aria-label", fallbackLabel);
             errores++;

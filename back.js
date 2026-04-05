@@ -85,6 +85,7 @@ async function generarAriaLabelIA(elementInfo, contexto) {
 
     const prompt = `Eres un experto en accesibilidad web. Genera un aria-label descriptivo para este elemento web:
     - Tipo: ${elementInfo.tagName}
+    - Role: ${elementInfo.role || 'ninguno'}
     - Clase: ${elementInfo.className || 'ninguna'}
     - ID: ${elementInfo.id || 'ninguno'}
     - URL: ${elementInfo.href || 'N/A'}
