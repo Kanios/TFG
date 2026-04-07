@@ -219,9 +219,9 @@ async function procesarFormularios() {
         const tieneAriaLabelBy = el.hasAttribute("aria-labelledby");
         const tieneTitle = el.hasAttribute("title") && el.getAttribute("title").trim().length > 0;
         
-        let labelAsociado = false;
+        let tieneLabelAsociado = false;
         if (el.closest("label")) {
-            labelAsociado = true;
+            tieneLabelAsociado = true;
         }else if (el.id) {
             const labelAsociado = document.querySelector(`label[for="${el.id}"]`);
             if (labelAsociado && labelAsociado.innerText.trim().length > 0) {
@@ -283,6 +283,37 @@ async function procesarFormularios() {
     console.log(`Procesamiento completado: ${procesados} elementos procesados, ${errores} errores`);
     if (elementosInaccesibles.length > limite) {
         console.log(`Se procesaron solo ${limite} de ${elementosInaccesibles.length} elementos (límite del prototipo)`);
+    }
+}
+
+//Función para procesar campos de formularios por si hay campos obligatorios y no se indican de manera accesible
+async function procesarCamposObligatorios() {
+    const Campos = document.querySelectorAll("input:not([type='hidden']):not([type='submit']), textarea, select");
+    let camposMejorados = 0;
+    Campos.forEach(campo => {
+        let esObligatorio = campo.hasAttribute("required") || campo.getAttribute("aria-required") === "true";
+        const label = campo.id ? document.querySelector(`label[for="${campo.id}"]`) : campo.closest("label");
+        const textoLabel = label ? label.innerText.trim() : "";
+        const placeholder = campo.getAttribute("placeholder") || "";
+
+        if(!esObligatorio){
+            const textoLabelMin = textoLabel.toLowerCase();
+            const placeholderMin = placeholder.toLowerCase();
+            if(textoLabelMin.includes("obligatorio") || placeholderMin.includes("obligatorio") || textoLabel.includes("*")|| placeholder.includes("*")){
+                esObligatorio = true;
+            }
+        }
+        if(esObligatorio && campo.getAttribute("aria-required") !== "true"){
+            campo.setAttribute("aria-required", "true");
+            const descActual = campo.getAttribute("aria-description") || "";
+            if(!descActual.toLowerCase().includes("obligatorio")){
+                campo.setAttribute("aria-description", (descActual + " Campo obligatorio.").trim());
+            }
+            camposMejorados++;
+        }
+    });
+    if(camposMejorados > 0){
+        console.log(`Se han mejorado ${camposMejorados} campos de formulario para indicar que son obligatorios.`);
     }
 }
 
@@ -448,6 +479,8 @@ window.addEventListener("load", async () => {
         await procesarImagenesSinAlt();
         
         await procesarElementosInteractivos();
+        await procesarFormularios();
+        await procesarCamposObligatorios();
         
         console.log("Procesamiento completo. La página ahora es más accesible.");
     } catch (error) {
