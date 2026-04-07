@@ -16,6 +16,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     
+    if (request.action === "generarAriaLabelFormulario") {
+        generarAriaLabelFormularioIA(request.elementInfo, request.contexto)
+            .then(ariaLabel => sendResponse({ success: true, ariaLabel }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
+
     if (request.action === "generarResumen") {
         generarResumenIA(request.pageInfo)
             .then(summary => sendResponse({ success: true, summary }))
@@ -125,6 +132,49 @@ async function generarAriaLabelIA(elementInfo, contexto) {
     }
 }
 
+//función para generar aria-label para formularios
+async function generarAriaLabelFormularioIA(elementInfo, contexto) {
+    const apiKey = CONFIG.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
+        throw new Error("API Key no configurada en config.js");
+    }
+    const prompt = `Eres un experto en accesibilidad web. Genera un aria-label descriptivo para este formulario:
+    - Etiqueta: ${elementInfo.tagName}
+    -Tipo: ${elementInfo.type || 'N/A'}
+    -Nombre: ${elementInfo.name || 'ninguno'}
+    -Placeholder: ${elementInfo.placeholder || 'ninguno'}
+    -ID: ${elementInfo.id || 'ninguno'}
+    -Texto cercano: ${elementInfo.textoVecino || 'ninguno'}
+    -Contexto: ${contexto}
+
+    Deduce el propósito del campo del formulario (ejemplo: "Introduzca su teléfono", "Acepte la política de privacidad") y responde SOLO con el aria-label, máximo 8 palabras, sin comillas.`;
+    const requestBody = {
+        contents: [{
+            parts: [{ text: prompt }]
+        }]
+    };
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+            }
+        );
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Error de Gemini API: ${error}`);
+        }
+        const data = await response.json();
+        const ariaLabel = data.candidates[0].content.parts[0].text.trim();
+        return ariaLabel.replace(/['"]/g, '');
+    } catch (error) {
+        console.error("Error generando aria-label para formulario:", error);
+        throw error;
+    }
+
+}
 //Función para generar resumen descriptivo de la página
 async function generarResumenIA(pageInfo) {
     const apiKey = CONFIG.GEMINI_API_KEY;

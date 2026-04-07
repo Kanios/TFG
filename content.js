@@ -209,6 +209,83 @@ async function procesarElementosInteractivos() {
     }
 }
 
+//Función para procesar los formularios sin etiqueta
+async function procesarFormularios() {
+    //omitimos inputs tipo hidden ya que no necesitan label y submit porque en caso de que el botón del formulario no tenga texto ni etiqueta lo habrá detectado la función elementos interactivos
+    const elementosTextareaSelect = "input:not([type='hidden']):not([type='submit']), textarea, select";
+    const elementosFormulario = document.querySelectorAll(elementosTextareaSelect);
+    const elementosInaccesibles = Array.from(elementosFormulario).filter(el => {
+        const tieneAriaLabel = el.hasAttribute("aria-label") && el.getAttribute("aria-label").trim().length > 0;
+        const tieneAriaLabelBy = el.hasAttribute("aria-labelledby");
+        const tieneTitle = el.hasAttribute("title") && el.getAttribute("title").trim().length > 0;
+        
+        let labelAsociado = false;
+        if (el.closest("label")) {
+            labelAsociado = true;
+        }else if (el.id) {
+            const labelAsociado = document.querySelector(`label[for="${el.id}"]`);
+            if (labelAsociado && labelAsociado.innerText.trim().length > 0) {
+                tieneLabelAsociado = true;
+            }
+        }
+        
+        return !tieneAriaLabel && !tieneAriaLabelBy && !tieneTitle && !tieneLabelAsociado;
+
+    });
+    console.log(`Encontrados ${elementosInaccesibles.length} elementos interactivos sin texto accesible`);
+    
+    if (elementosInaccesibles.length === 0) return;
+
+    const contexto = obtenerContextoPagina();
+    let procesados = 0;
+    let errores = 0;
+    
+    const limite = Math.min(elementosInaccesibles.length, 10);
+    for (let i = 0; i < limite; i++) {
+        const el = elementosInaccesibles[i];
+        
+        try {
+            const elementInfo = {
+                tagName: el.tagName.toLowerCase(),
+                type: el.type || null,
+                name: el.name || null,
+                id: el.id,
+                placeholder: el.placeholder || null,
+                textoVecino: obtenerTextoVecino(el)
+            };
+            
+            console.log(`Generando aria-label para formulario ${elementInfo.tagName} ${i + 1}/${limite}...`);
+            
+            const response = await chrome.runtime.sendMessage({
+                action: "generarAriaLabelFormulario",
+                elementInfo: elementInfo,
+                contexto: contexto
+            });
+
+            if (response.success) {
+                el.setAttribute("aria-label", response.ariaLabel);
+                el.setAttribute("data-ai-generated", "true");
+                procesados++;
+                console.log(`Aria-label de formulario generado: "${response.ariaLabel}"`);
+            } else {
+                throw new Error(response.error);
+            }
+            
+        } catch (error) {
+            console.error(`Error generando aria-label para formulario ${i + 1}:`, error.message);
+            el.setAttribute("aria-label", "Campo de formulario iterativo");
+            errores++;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    console.log(`Procesamiento completado: ${procesados} elementos procesados, ${errores} errores`);
+    if (elementosInaccesibles.length > limite) {
+        console.log(`Se procesaron solo ${limite} de ${elementosInaccesibles.length} elementos (límite del prototipo)`);
+    }
+}
+
 //Función auxiliar para obtener texto de elementos vecinos para generar contexto
 function obtenerTextoVecino(element) {
     const padre = element.parentElement;
