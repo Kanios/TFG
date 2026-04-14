@@ -286,6 +286,71 @@ async function procesarFormularios() {
     }
 }
 
+//Procesar etiquetas existentes pero insuficientes (primer borrador)
+async function procesarEtiquetasInsuficientes() {
+    //Normalizar texto (sin tildes, paso a minúsculas)
+    const normalizarTexto = (texto) => {
+        return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    };
+
+    //Blacklist WCAG (multilingüe)
+    const blacklistWCAG = [
+        // Español
+        "imagen", "foto", "fotografia", "logo", "logotipo", "grafico", "grafica", "dibujo",
+        "vacio", "blanco", "enlace", "link", "haga clic", "clic aqui", "click aqui",
+        "boton", "pulsar", "mas", "leer mas", "ver mas", "detalle", "info", "aqui", "titulo",
+        // Inglés
+        "image", "img", "picture", "pic", "photo", "photograph", "logotype", "graphic", "drawing",
+        "empty", "blank", "link", "click", "click here", "button", "press",
+        "more", "read more", "see more", "details", "info", "here", "title",
+        // Comunes CMS
+        "untitled", "sin titulo", "default", "null", "undefined", "0"
+    ];
+
+    // Expresiones para detectar archivos, nombre solo de imágenes, rutas como "IMG_1234", "DSC001", "Screenshot_2024" o enlaces, o texto que solo tenga símbolos 
+    const extensionesRegex = /\.(jpg|jpeg|png|gif|webp|svg|ico|bmp|tiff)$/i;
+    const archivosRegex = /^(img|dsc|screenshot|captura|whatsapp|whatsapp_image)[_\-\s]?\d+/i;
+    const rutasRegex = /^(https?:\/\/|www\.|\/|\.\.\/)/i;
+    const simbolosRegex = /^[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ]+$/;
+
+    const elementosInsuficientes = [];
+
+    const evaluarElemento = (el, textoOriginal) => {
+        if (!textoOriginal || textoOriginal.trim().length === 0) return;
+
+        const textoNorm = normalizarTexto(textoOriginal);
+
+        //Se comprueba si cumple con los patrones y se añade a la lista
+        if (
+            extensionesRegex.test(textoNorm) || 
+            archivosRegex.test(textoNorm) ||
+            rutasRegex.test(textoNorm) || 
+            simbolosRegex.test(textoNorm) || 
+            blacklistWCAG.includes(textoNorm)
+        ) {
+            elementosInsuficientes.push({ el, textoOriginal});
+        } 
+    };
+
+    // Recopilar imágenes
+    const imagenes = document.querySelectorAll("img[alt]");
+    imagenes.forEach(img => evaluarElemento(img, img.getAttribute("alt")));
+
+    // Recopilar elementos interactivos
+    const selectoresInteractivos = "button, a, [role='button'], [role='link'], [role='tab'], [role='menuitem']";
+    const elementosInteractivos = document.querySelectorAll(selectoresInteractivos);
+    
+    elementosInteractivos.forEach(el => {
+        // Obtenemos el texto visible o el aria-label existente
+        const texto = el.getAttribute("aria-label") || el.innerText;
+        evaluarElemento(el, texto);
+    });
+
+    console.log(`Elementos insuficientes detectados: ${elementosInsuficientes.length}`);
+    //mensaje de prueba
+    elementosInsuficientes.forEach((item, i) => console.log(`[Rechazado ${i + 1}] "${item.textoOriginal}"`));
+}
+
 //Función para procesar campos de formularios por si hay campos obligatorios y no se indican de manera accesible
 async function procesarCamposObligatorios() {
     const Campos = document.querySelectorAll("input:not([type='hidden']):not([type='submit']), textarea, select");
@@ -480,6 +545,7 @@ window.addEventListener("load", async () => {
         
         await procesarElementosInteractivos();
         await procesarFormularios();
+        await procesarEtiquetasInsuficientes();
         await procesarCamposObligatorios();
         
         console.log("Procesamiento completo. La página ahora es más accesible.");
