@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Asistente Inteligente de Accesibilidad Web</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      width: 300px;
+      padding: 10px;
+      position: relative;
+    }
+
+    #cerrar {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      border: none;
+      background: transparent;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+
+    button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px;
+    }
+  </style>
+
+</head>
+<body>
+    <button id="cerrar" aria-label="Cerrar">✕</button>
+
+    <h1>¿Quiere activar el asistente en la página actual?</h1>
+    <button id="activar">Activar</button>
+    <button id="desactivar">Desactivar</button>
+
+    <script src="popup.js"></script>
+</body>
+</html>
