@@ -71,11 +71,16 @@ async function procesarImagenesSinAlt() {
         const img = imagenesSinAlt[i];
         
         try {
+            img.setAttribute("data-ai-original-alt", img.hasAttribute("alt") ? img.getAttribute("alt") : "__removed__");
+            img.setAttribute("data-ai-generated", "true");
+
             const imagenUrl = img.src;
             
             //Validar que la imagen sea accesible y no sea muy pequeña (probablemente decorativa)
             if (!imagenUrl || img.width < 20 || img.height < 20) {
-                img.setAttribute("alt", "Imagen decorativa");
+                // Cambio según las buenas prácticas de la WCAG las imagenes decorativas es bueno poner ""
+                img.setAttribute("alt", "");
+                console.log("Imagen omitida:", img);
                 omitidas++;
                 continue;
             }
@@ -100,7 +105,6 @@ async function procesarImagenesSinAlt() {
 
             if (response.success) {
                 img.setAttribute("alt", response.altText);
-                img.setAttribute("data-ai-generated", "true");
                 procesadas++;
                 console.log(`Alt text generado: "${response.altText}"`);
             } else {
@@ -122,6 +126,7 @@ async function procesarImagenesSinAlt() {
         console.log(`Se procesaron solo ${limite} de ${imagenesSinAlt.length} imágenes`);
     }
 }
+
 
 //procesamiento de elementos interactivos sin aria-label
 
@@ -156,6 +161,9 @@ async function procesarElementosInteractivos() {
         const el = elementosInaccesibles[i];
         
         try {
+            el.setAttribute("data-ai-original-aria-label", el.hasAttribute("aria-label") ? el.getAttribute("aria-label") : "__removed__");
+            el.setAttribute("data-ai-generated", "true");
+
             const elementInfo = {
                 tagName: el.tagName.toLowerCase(),
                 role : el.getAttribute("role") || null,
@@ -175,7 +183,6 @@ async function procesarElementosInteractivos() {
 
             if (response.success) {
                 el.setAttribute("aria-label", response.ariaLabel);
-                el.setAttribute("data-ai-generated", "true");
                 procesados++;
                 console.log(`Aria-label generado: "${response.ariaLabel}"`);
             } else {
@@ -245,6 +252,9 @@ async function procesarFormularios() {
         const el = elementosInaccesibles[i];
         
         try {
+            el.setAttribute("data-ai-original-aria-label", el.hasAttribute("aria-label") ? el.getAttribute("aria-label") : "__removed__");
+            el.setAttribute("data-ai-generated", "true");
+
             const elementInfo = {
                 tagName: el.tagName.toLowerCase(),
                 type: el.type || null,
@@ -264,7 +274,6 @@ async function procesarFormularios() {
 
             if (response.success) {
                 el.setAttribute("aria-label", response.ariaLabel);
-                el.setAttribute("data-ai-generated", "true");
                 procesados++;
                 console.log(`Aria-label de formulario generado: "${response.ariaLabel}"`);
             } else {
@@ -332,26 +341,96 @@ async function procesarEtiquetasInsuficientes() {
         } 
     };
 
-    // Recopilar imágenes
+    // Recopilar imágenes (excluir las ya procesadas por otras funciones)
     const imagenes = document.querySelectorAll("img[alt]");
-    imagenes.forEach(img => evaluarElemento(img, img.getAttribute("alt")));
 
-    // Recopilar elementos interactivos
+    imagenes.forEach(img => {
+        if (!img.hasAttribute("data-ai-generated")) evaluarElemento(img, img.getAttribute("alt"));
+    });
+
+    // Recopilar elementos interactivos (excluir los ya procesados)
     const selectoresInteractivos = "button, a, [role='button'], [role='link'], [role='tab'], [role='menuitem']";
     const elementosInteractivos = document.querySelectorAll(selectoresInteractivos);
     
     elementosInteractivos.forEach(el => {
-        // Obtenemos el texto visible o el aria-label existente
+        if (el.hasAttribute("data-ai-generated")) return;
         const texto = el.getAttribute("aria-label") || el.innerText;
         evaluarElemento(el, texto);
     });
 
     console.log(`Elementos insuficientes detectados: ${elementosInsuficientes.length}`);
-    //mensaje de prueba
-    elementosInsuficientes.forEach((item, i) => console.log(`[Rechazado ${i + 1}] "${item.textoOriginal}"`));
+
+    if (elementosInsuficientes.length === 0) return;
+
+    const contexto = obtenerContextoPagina();
+    const limite = Math.min(elementosInsuficientes.length, 10);
+    let corregidos = 0;
+    let errores = 0;
+
+    for (let i = 0; i < limite; i++) {
+        const { el, textoOriginal } = elementosInsuficientes[i];
+        const esImagen = el.tagName.toLowerCase() === "img";
+
+        try {
+            if (esImagen) {
+                el.setAttribute("data-ai-original-alt", el.getAttribute("alt"));
+                el.setAttribute("data-ai-generated", "true");
+
+                const imagenBase64 = await convertirImagenABase64(el);
+                const response = await chrome.runtime.sendMessage({
+                    action: "generarAltText",
+                    imagenBase64,
+                    contexto
+                });
+
+                if (response.success) {
+                    el.setAttribute("alt", response.altText);
+                    corregidos++;
+                    console.log(`[EtiquetaInsuficiente] Alt corregido: "${textoOriginal}" → "${response.altText}"`);
+                } else {
+                    throw new Error(response.error);
+                }
+            } else {
+                el.setAttribute("data-ai-original-aria-label", el.hasAttribute("aria-label") ? el.getAttribute("aria-label") : "__removed__");
+                el.setAttribute("data-ai-generated", "true");
+
+                const elementInfo = {
+                    tagName: el.tagName.toLowerCase(),
+                    role: el.getAttribute("role") || null,
+                    className: el.className,
+                    id: el.id,
+                    href: el.href || null,
+                    textoVecino: obtenerTextoVecino(el)
+                };
+                const response = await chrome.runtime.sendMessage({
+                    action: "generarAriaLabel",
+                    elementInfo,
+                    contexto
+                });
+
+                if (response.success) {
+                    el.setAttribute("aria-label", response.ariaLabel);
+                    corregidos++;
+                    console.log(`[EtiquetaInsuficiente] Aria-label corregido: "${textoOriginal}" → "${response.ariaLabel}"`);
+                } else {
+                    throw new Error(response.error);
+                }
+            }
+        } catch (error) {
+            console.error(`Error corrigiendo etiqueta insuficiente ${i + 1}:`, error.message);
+            errores++;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    console.log(`Etiquetas insuficientes: ${corregidos} corregidas, ${errores} errores`);
+    if (elementosInsuficientes.length > limite) {
+        console.log(`Se procesaron solo ${limite} de ${elementosInsuficientes.length} elementos`);
+    }
 }
 
-//Función para procesar campos de formularios por si hay campos obligatorios y no se indican de manera accesible
+//Procesar campos obligatorios no accesible
 async function procesarCamposObligatorios() {
     const Campos = document.querySelectorAll("input:not([type='hidden']):not([type='submit']), textarea, select");
     let camposMejorados = 0;
@@ -369,11 +448,14 @@ async function procesarCamposObligatorios() {
             }
         }
         if(esObligatorio && campo.getAttribute("aria-required") !== "true"){
+            campo.setAttribute("data-ai-original-aria-required", campo.hasAttribute("aria-required") ? campo.getAttribute("aria-required") : "__removed__");
             campo.setAttribute("aria-required", "true");
             const descActual = campo.getAttribute("aria-description") || "";
             if(!descActual.toLowerCase().includes("obligatorio")){
+                campo.setAttribute("data-ai-original-aria-description", campo.hasAttribute("aria-description") ? campo.getAttribute("aria-description") : "__removed__");
                 campo.setAttribute("aria-description", (descActual + " Campo obligatorio.").trim());
             }
+            campo.setAttribute("data-ai-generated", "true");
             camposMejorados++;
         }
     });
@@ -511,15 +593,26 @@ function obtenerColoresDominantes() {
 function insertarResumen(textoGenerado) {
     const container = document.createElement("section");
 
+    container.setAttribute("id", "resumen-accesibilidad");
     container.setAttribute("role", "region");
     container.setAttribute("aria-label", "Resumen descriptivo de la página actual.");
-    container.setAttribute("tabindex", "0");
+    container.setAttribute("data-ai-generated", "true");
+    // Se elimina la etiqueta tabindex=0
     container.style.position = "absolute";
-    container.style.left = "-9999px"; //Para que no se vea visualmente
-
-    const heading = document.createElement("h2");
+    // Cambio, forma de ocultar visualmente el resumen
+    container.style.width = "1px";          
+    container.style.height = "1px";
+    container.style.margin = "-1px";
+    container.style.overflow = "hidden"; //Para que no se vea visualmente
+    container.style.whiteSpace = "nowrap"; 
+    //Comprobar que haya 1 h1, si lo hay generar un h2, sino un h1. Incluso si no hay h1 cambiar el título a descripción general de: Generar título
+    let heading;
+    if(document.querySelector('h1')){
+        heading = document.createElement("h2");
+    }else{
+        heading = document.createElement("h1");
+    }
     heading.innerText = "Descripción general de la página";
-
     const contenido = document.createElement("p");
     contenido.innerText = textoGenerado;
 
@@ -530,9 +623,13 @@ function insertarResumen(textoGenerado) {
     console.log("Resumen generado:", textoGenerado);
 }
 
-//inicializacion del asistente al cargar la página
+//Cambio para cuando se active con el botón del popup o se desactive
+if (!window.asistenteAccesibilidadActivo) {
+  window.asistenteAccesibilidadActivo = true;
+  iniciarAsistente();
+}
 
-window.addEventListener("load", async () => {
+async function iniciarAsistente(){
     console.log("Iniciando asistente de accesibilidad...");
     
     const textoResumen = await generarResumen();
@@ -552,4 +649,41 @@ window.addEventListener("load", async () => {
     } catch (error) {
         console.error("Error durante el procesamiento:", error);
     }
+};
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.action === "desactivarExtension") {
+    desactivarAsistente();
+  }
 });
+
+function desactivarAsistente() {
+    if (!window.asistenteAccesibilidadActivo) return;
+
+    console.log("Desactivando asistente de accesibilidad...");
+
+    document.querySelectorAll("[data-ai-generated]").forEach(el => {
+        const restoreAttr = (dataKey, attrName) => {
+            if (!el.hasAttribute(dataKey)) return;
+            const original = el.getAttribute(dataKey);
+            if (original === "__removed__") {
+                el.removeAttribute(attrName);
+            } else {
+                el.setAttribute(attrName, original);
+            }
+            el.removeAttribute(dataKey);
+        };
+
+        restoreAttr("data-ai-original-alt", "alt");
+        restoreAttr("data-ai-original-aria-label", "aria-label");
+        restoreAttr("data-ai-original-aria-required", "aria-required");
+        restoreAttr("data-ai-original-aria-description", "aria-description");
+
+        el.removeAttribute("data-ai-generated");
+    });
+
+    document.getElementById("resumen-accesibilidad")?.remove();
+
+    window.asistenteAccesibilidadActivo = false;
+    console.log("Asistente desactivado. Cambios revertidos.");
+}

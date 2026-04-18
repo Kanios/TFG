@@ -2,6 +2,31 @@ importScripts('config.js');
 
 //Listener para mensajes desde content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    //Cambio con scripting para que solo se active cuando se pulsa el botón de activar en el popup
+    if (request.action === "activarExtension") {
+        chrome.scripting.executeScript({
+            target: { tabId: request.tabId },
+            func: () => Boolean(window.asistenteAccesibilidadActivo)
+        }).then(([result]) => {
+            if (!result.result) {
+                chrome.scripting.executeScript({
+                    target: { tabId: request.tabId },
+                    files: ["content.js"]
+                }).then(() => {
+                    sendResponse({ success: true, injected: true });
+                }).catch(error => {
+                    sendResponse({ success: false, error: error.message });
+                });
+            } else {
+                sendResponse({ success: true, injected: false });
+            }
+        }).catch(error => {
+            sendResponse({ success: false, error: error.message });
+        });
+
+        return true;
+    }
+    
     if (request.action === "generarAltText") {
         generarAltTextIA(request.imagenBase64, request.contexto)
             .then(altText => sendResponse({ success: true, altText }))
@@ -28,6 +53,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .then(summary => sendResponse({ success: true, summary }))
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
+    }
+});
+
+//Cambio Toggle para que si el usuario configura un atajo de teclado para la extensión en los ajustes de Google se active o desactive la extensión
+chrome.commands.onCommand.addListener((command) => {
+    if (command === "toggle-extension") {
+
+        chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+            if (!tab?.id) return;
+
+            chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: () => Boolean(window.asistenteAccesibilidadActivo)
+            }).then(([result]) => {
+
+                if (result.result) {
+                    chrome.tabs.sendMessage(tab.id, {
+                        action: "desactivarExtension"
+                    });
+                } else {
+                    chrome.scripting.executeScript({
+                        target: { tabId: tab.id },
+                        files: ["content.js"]
+                    });
+                }
+
+            });
+        });
     }
 });
 

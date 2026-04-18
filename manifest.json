@@ -4,7 +4,8 @@
     "version": "0.1",
     "description": "Prototipo para mejorar la accesibilidad en páginas web con IA",
     "permissions": [
-        "activeTab"
+        "activeTab",
+        "scripting"
     ],
     "host_permissions": [
         "https://generativelanguage.googleapis.com/*",
@@ -13,11 +14,16 @@
     "background": {
         "service_worker": "back.js"
     },
-    "content_scripts": 
-    [
-        {
-            "matches": ["<all_urls>"],
-            "js": ["content.js"]
+    "action":{
+        "default_popup": "popup.html"
+    },
+    "commands": {
+        "toggle-extension": {
+            "suggested_key": {
+                "default": "Alt+Shift+A",
+                "mac": "Command+Shift+A"
+            },
+            "description": "Activar o desactivar asistente."
         }
-    ]
+    }
 }

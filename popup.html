@@ -2,41 +2,146 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Asistente Inteligente de Accesibilidad Web</title>
+  <title>Asistente de Accesibilidad Web</title>
   <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
     body {
-      font-family: Arial, sans-serif;
-      width: 300px;
-      padding: 10px;
-      position: relative;
+      font-family: 'Google Sans', Roboto, Arial, sans-serif;
+      width: 320px;
+      background: #f1f3f4;
+      color: #202124;
+      padding: 8px;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+
+    .popup-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 20px 20px 0;
+    }
+
+    .popup-titulo {
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1.4;
+      color: #202124;
+      padding-right: 8px;
     }
 
     #cerrar {
-      position: absolute;
-      top: 8px;
-      right: 8px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      margin-top: -4px;
       border: none;
       background: transparent;
-      font-size: 16px;
+      border-radius: 50%;
       cursor: pointer;
+      color: #5f6368;
+      font-size: 18px;
+      line-height: 1;
     }
 
+    #cerrar:hover {
+      background: #f1f3f4;
+    }
 
-    button {
+    #cerrar:focus-visible {
+      outline: 3px solid #202124;
+      outline-offset: 2px;
+      border-radius: 50%;
+    }
+
+    .popup-descripcion {
+      padding: 8px 20px 0;
+      font-size: 13px;
+      color: #5f6368;
+      line-height: 1.5;
+    }
+
+    .popup-acciones {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 20px;
+    }
+
+    .btn {
       width: 100%;
-      margin-top: 10px;
-      padding: 8px;
+      min-height: 44px;
+      padding: 10px 24px;
+      border-radius: 24px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      letter-spacing: 0.01em;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .btn:focus-visible {
+      outline: 3px solid #202124;
+      outline-offset: 3px;
+    }
+
+    .btn-primario {
+      background: #202124;
+      color: #ffffff;
+      border: 2px solid #202124;
+    }
+
+    .btn-primario:hover {
+      background: #3c4043;
+      border-color: #3c4043;
+    }
+
+    .btn-secundario {
+      background: transparent;
+      color: #202124;
+      border: 1.5px solid #dadce0;
+    }
+
+    .btn-secundario:hover {
+      background: #f8f9fa;
+      border-color: #bdc1c6;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .btn {
+        transition: none;
+      }
     }
   </style>
 
 </head>
 <body>
-    <button id="cerrar" aria-label="Cerrar">✕</button>
+  <div class="popup-header">
+    <h1 class="popup-titulo">Asistente de Accesibilidad Web</h1>
+    <button id="cerrar" aria-label="Cerrar popup">&#x2715;</button>
+  </div>
 
-    <h1>¿Quiere activar el asistente en la página actual?</h1>
-    <button id="activar">Activar</button>
-    <button id="desactivar">Desactivar</button>
+  <p class="popup-descripcion">Mejora la accesibilidad de la página actual usando inteligencia artificial.</p>
 
-    <script src="popup.js"></script>
+  <div class="popup-acciones" role="group" aria-label="Acciones del asistente">
+    <button id="activar" class="btn btn-primario">Activar asistente</button>
+    <button id="desactivar" class="btn btn-secundario">Desactivar asistente</button>
+  </div>
+  
+  <script src="popup.js"></script>
 </body>
 </html>
