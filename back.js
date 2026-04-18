@@ -54,6 +54,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
     }
+
+    if (request.action === "generarAriaLabelNav") {
+        generarAriaLabelNavIA(request.navInfo, request.contexto)
+            .then(ariaLabel => sendResponse({ success: true, ariaLabel }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
 });
 
 //Cambio Toggle para que si el usuario configura un atajo de teclado para la extensión en los ajustes de Google se active o desactive la extensión
@@ -92,25 +99,28 @@ async function generarAltTextIA(imagenBase64, contexto) {
         throw new Error("API Key no configurada en config.js");
     }
 
+    const prompt = `Eres un experto en accesibilidad web. Genera un alt text para esta imagen siguiendo WCAG 1.1.1.
+    - Contexto de la página: ${contexto}
+
+    Reglas:
+    - Describe el CONTENIDO y el PROPÓSITO de la imagen, no su estilo ni sus colores
+    - Si el contexto indica que la imagen es el único contenido de un enlace, el alt debe describir el DESTINO del enlace
+    - No empieces con "Imagen de", "Foto de" ni similares — el lector de pantalla ya anuncia que es una imagen
+    - Si es un logotipo, menciona el nombre de la marca
+
+    Ejemplos de buenos alt text: "Gráfico de ventas trimestrales 2024", "Portada del libro El Quijote", "Ir a la página de inicio", "Logotipo de TechCorp"
+    Responde SOLO con el alt text, máximo 15 palabras, sin comillas.`;
+
+    const requestBody = {
+        contents: [{
+            parts: [
+                { text: prompt },
+                { inline_data: { mime_type: "image/jpeg", data: imagenBase64 } }
+            ]
+        }]
+    };
+
     try {
-        const prompt = `Eres un experto en accesibilidad web. Genera un alt text breve y descriptivo para esta imagen.
-        Contexto de la página: ${contexto}
-        Responde SOLO con el alt text, máximo 15 palabras, sin comillas.`;
-
-        const requestBody = {
-            contents: [{
-                parts: [
-                    { text: prompt },
-                    {
-                        inline_data: {
-                            mime_type: "image/jpeg",
-                            data: imagenBase64
-                        }
-                    }
-                ]
-            }]
-        };
-
         const response = await fetch(
             `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
             {
@@ -126,9 +136,7 @@ async function generarAltTextIA(imagenBase64, contexto) {
         }
 
         const data = await response.json();
-        const altText = data.candidates[0].content.parts[0].text.trim();
-        return altText.replace(/['"]/g, '');
-        
+        return data.candidates[0].content.parts[0].text.trim().replace(/['"]/g, "");
     } catch (error) {
         console.error("Error generando alt text:", error);
         throw error;
@@ -138,19 +146,23 @@ async function generarAltTextIA(imagenBase64, contexto) {
 //Función para generar aria-label para elementos interactivos
 async function generarAriaLabelIA(elementInfo, contexto) {
     const apiKey = CONFIG.GEMINI_API_KEY;
-    
     if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
         throw new Error("API Key no configurada en config.js");
     }
 
-    const prompt = `Eres un experto en accesibilidad web. Genera un aria-label descriptivo para este elemento web:
-    - Tipo: ${elementInfo.tagName}
-    - Role: ${elementInfo.role || 'ninguno'}
-    - Clase: ${elementInfo.className || 'ninguna'}
-    - ID: ${elementInfo.id || 'ninguno'}
-    - URL: ${elementInfo.href || 'N/A'}
-    - Texto cercano: ${elementInfo.textoVecino || 'ninguno'}
-    - Contexto: ${contexto}
+    const prompt = `Eres un experto en accesibilidad web. Genera un aria-label descriptivo para este elemento interactivo sin texto visible WCAG 4.1.2.
+    - Tipo de elemento: ${elementInfo.tagName}
+    - Rol ARIA: ${elementInfo.role || "ninguno"}
+    - ID: ${elementInfo.id || "ninguno"}
+    - URL de destino: ${elementInfo.href || "N/A"}
+    - Texto cercano en el DOM: ${elementInfo.textoVecino || "ninguno"}
+    - Contexto de la página: ${contexto}
+
+    Reglas según el tipo de elemento:
+    - Botones (button, role=button): verbo de acción en imperativo (ejemplos: "Abrir menú de navegación", "Enviar formulario", "Cerrar ventana emergente")
+    - Enlaces (a, role=link): describir el destino o acción (ejemplos: "Ir a la sección de precios", "Descargar catálogo en PDF", "Ver más noticias")
+    - Pestañas (role=tab): describir el contenido de la pestaña (ejemplos: "Pestaña de configuración", "Pestaña de historial de pedidos")
+    - Menú (role=menuitem): describir la opción (ejemplo: "Opción de idioma español")
 
     Responde SOLO con el aria-label, máximo 8 palabras, sin comillas.`;
 
@@ -176,9 +188,7 @@ async function generarAriaLabelIA(elementInfo, contexto) {
         }
 
         const data = await response.json();
-        const ariaLabel = data.candidates[0].content.parts[0].text.trim();
-        return ariaLabel.replace(/['"]/g, '');
-        
+        return data.candidates[0].content.parts[0].text.trim().replace(/['"]/g, "");
     } catch (error) {
         console.error("Error generando aria-label:", error);
         throw error;
@@ -191,21 +201,27 @@ async function generarAriaLabelFormularioIA(elementInfo, contexto) {
     if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
         throw new Error("API Key no configurada en config.js");
     }
-    const prompt = `Eres un experto en accesibilidad web. Genera un aria-label descriptivo para este formulario:
-    - Etiqueta: ${elementInfo.tagName}
-    -Tipo: ${elementInfo.type || 'N/A'}
-    -Nombre: ${elementInfo.name || 'ninguno'}
-    -Placeholder: ${elementInfo.placeholder || 'ninguno'}
-    -ID: ${elementInfo.id || 'ninguno'}
-    -Texto cercano: ${elementInfo.textoVecino || 'ninguno'}
-    -Contexto: ${contexto}
 
-    Deduce el propósito del campo del formulario (ejemplo: "Introduzca su teléfono", "Acepte la política de privacidad") y responde SOLO con el aria-label, máximo 8 palabras, sin comillas.`;
-    const requestBody = {
-        contents: [{
-            parts: [{ text: prompt }]
-        }]
-    };
+    const prompt = `Eres un experto en accesibilidad web. Genera un aria-label para este campo de formulario sin etiqueta visible WCAG 1.3.1.
+    - Elemento HTML: ${elementInfo.tagName}
+    - Tipo de input: ${elementInfo.type || "texto"}
+    - Atributo name: ${elementInfo.name || "ninguno"}
+    - Placeholder: ${elementInfo.placeholder || "ninguno"}
+    - ID: ${elementInfo.id || "ninguno"}
+    - Grupo del fieldset (legend): ${elementInfo.legendContext || "ninguno"}
+    - Texto cercano en el DOM: ${elementInfo.textoVecino || "ninguno"}
+    - Contexto de la página: ${contexto}
+
+    Reglas:
+    - Deduce el propósito del campo a partir de todos los datos anteriores
+    - Usa forma imperativa para campos de texto (ejemplos: "Introduzca su correo electrónico", "Escriba su nombre completo", "Ingrese su número de teléfono")
+    - Para checkboxes y radios describe la opción (ejemplos: "Acepto los términos y condiciones", "Género masculino", "Suscribirse al boletín")
+    - Para select describe qué se selecciona (ejemplos: "Seleccione su país", "Elija un idioma")
+
+    Responde SOLO con el aria-label, máximo 8 palabras, sin comillas.`;
+
+    const requestBody = { contents: [{ parts: [{ text: prompt }] }] };
+
     try {
         const response = await fetch(
             `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
@@ -220,43 +236,73 @@ async function generarAriaLabelFormularioIA(elementInfo, contexto) {
             throw new Error(`Error de Gemini API: ${error}`);
         }
         const data = await response.json();
-        const ariaLabel = data.candidates[0].content.parts[0].text.trim();
-        return ariaLabel.replace(/['"]/g, '');
+        return data.candidates[0].content.parts[0].text.trim().replace(/['"]/g, "");
     } catch (error) {
         console.error("Error generando aria-label para formulario:", error);
         throw error;
     }
-
 }
+
+//Función para generar aria-label para navs cuando hay más de uno
+async function generarAriaLabelNavIA(navInfo, contexto) {
+    const apiKey = CONFIG.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
+        throw new Error("API Key no configurada en config.js");
+    }
+    const prompt = `Eres un experto en accesibilidad web. Esta página tiene ${navInfo.totalNavs} elementos de navegación y necesitan aria-label únicos para distinguirlos WCAG ARIA11.
+    Genera un aria-label breve para esta navegación concreta:
+    - Elemento padre en el DOM: ${navInfo.posicion || "desconocido"}
+    - Encabezado dentro del nav: ${navInfo.encabezado || "ninguno"}
+    - Primeros enlaces que contiene: ${navInfo.enlaces?.join(", ") || "ninguno"}
+    - Contexto de la página: ${contexto}
+
+    Ejemplos de buenos aria-label: "Navegación principal", "Menú de pie de página", "Navegación de categorías", "Menú secundario", "Redes sociales", "Pasos del proceso".
+    Responde SOLO con el aria-label, máximo 4 palabras, sin comillas.`;
+
+    const requestBody = { contents: [{ parts: [{ text: prompt }] }] };
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) }
+        );
+        if (!response.ok) throw new Error(`Error de Gemini API: ${await response.text()}`);
+        const data = await response.json();
+        return data.candidates[0].content.parts[0].text.trim().replace(/['"]/g, "");
+    } catch (error) {
+        console.error("Error generando aria-label para nav:", error);
+        throw error;
+    }
+}
+
 //Función para generar resumen descriptivo de la página
 async function generarResumenIA(pageInfo) {
     const apiKey = CONFIG.GEMINI_API_KEY;
-    
     if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
         throw new Error("API Key no configurada en config.js");
     }
 
-    const prompt = `Eres un experto en accesibilidad web. Genera un resumen descriptivo y útil de esta página web para usuarios con discapacidad visual.
-
-    Información de la página:
-    - Título: ${pageInfo.titulo}
+    const prompt = `Eres un experto en accesibilidad web. Genera un resumen descriptivo de esta página para ser leído por un lector de pantalla al inicio.
+    - Título de la página: ${pageInfo.titulo}
     - URL: ${pageInfo.url}
-    - Encabezado principal: ${pageInfo.encabezadoPrincipal}
-    - Meta descripción: ${pageInfo.descripcionMeta}
+    - Encabezado principal (h1): ${pageInfo.encabezadoPrincipal}
+    - Meta descripción: ${pageInfo.descripcionMeta || "no disponible"}
     - Otros encabezados: ${pageInfo.headings}
-    - Contenido inicial: ${pageInfo.parrafos}
-    - Navegación: ${pageInfo.tieneNav ? 'Sí - ' + pageInfo.navText : 'No detectada'}
+    - Primeros párrafos: ${pageInfo.parrafos}
+    - Menú de navegación: ${pageInfo.tieneNav ? "Sí — " + pageInfo.navText : "No detectado"}
     - Colores detectados: ${pageInfo.colores}
     - Estadísticas: ${pageInfo.stats.links} enlaces, ${pageInfo.stats.buttons} botones, ${pageInfo.stats.imagenes} imágenes
 
-    Genera un resumen que incluya:
-    1. El propósito principal de la página (ej: "Página de búsqueda de billetes de tren")
-    2. Los colores corporativos o esquema de colores principales detectados(no añadir valores rgb, solo descripciones como "colores oscuros con acentos naranjas")
-    3. La estructura de navegación disponible y opciones principales
-    4. Cualquier información relevante sobre la organización del contenido
+    El resumen debe cubrir en este orden de prioridad:
+    1. Propósito principal de la página en una frase (ejemplo: "Página de compra de billetes de tren de Renfe")
+    2. Estructura de navegación disponible y sus opciones principales
+    3. Organización general del contenido
+    4. Esquema de colores en lenguaje natural, sin valores RGB (ejemplo: "fondo blanco con botones azules")
 
-    El resumen debe ser claro, conciso (máximo 80 palabras) y útil para alguien invidente.
-    Responde directamente con el resumen, sin introducciones ni formato especial.`;
+    Reglas:
+    - Máximo 80 palabras en total
+    - Sin listas, sin viñetas, solo texto continuo
+    - Sin introducciones como "Esta página..." — empieza directamente con el propósito
+    - Usa lenguaje claro y directo, pensado para ser escuchado por usuarios de lectores de pantalla
 
     const requestBody = {
         contents: [{
@@ -280,9 +326,7 @@ async function generarResumenIA(pageInfo) {
         }
 
         const data = await response.json();
-        const summary = data.candidates[0].content.parts[0].text.trim();
-        return summary;
-        
+        return data.candidates[0].content.parts[0].text.trim();
     } catch (error) {
         console.error("Error generando resumen de página:", error);
         throw error;

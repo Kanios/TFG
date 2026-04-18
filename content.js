@@ -776,6 +776,125 @@ if (!window.asistenteAccesibilidadActivo) {
   iniciarAsistente();
 }
 
+//Función para procesar cuando la página tiene varios nav y no tienen aria-label o título
+async function procesarNav() {
+    const navs = Array.from(new Set([...document.querySelectorAll("nav"),...document.querySelectorAll("[role='navigation']")]));
+
+    //Si solo hay una nav no necesita label segun las WCAG
+    if (navs.length <= 1) {
+        console.log("Solo hay una navegación en la página, no se requiere aria-label");
+        return;
+    }
+
+    console.log(`Encontradas ${navs.length} navegaciones — comprobando etiquetas`);
+
+    const sinEtiquetar = navs.filter(nav => {
+        if (nav.hasAttribute("aria-label") && nav.getAttribute("aria-label").trim().length > 0) return false;
+        if (nav.hasAttribute("title") && nav.getAttribute("title").trim().length > 0) return false;
+        if (nav.hasAttribute("aria-labelledby")) {
+            const tieneRefValida = nav.getAttribute("aria-labelledby").trim().split(/\s+/).some(id => {
+                const ref = document.getElementById(id);
+                return ref && ref.textContent.trim().length > 0;
+            });
+            if (tieneRefValida) return false;
+        }
+        return true;
+    });
+
+    if (sinEtiquetar.length === 0) {
+        console.log("Todas las navegaciones ya tienen etiqueta accesible");
+        return;
+    }
+
+    const contexto = obtenerContextoPagina();
+    let procesadas = 0;
+    let errores = 0;
+
+    for (const nav of sinEtiquetar) {
+        try {
+            nav.setAttribute("data-ai-original-aria-label", nav.hasAttribute("aria-label") ? nav.getAttribute("aria-label") : "__removed__");
+            nav.setAttribute("data-ai-generated", "true");
+
+            const navInfo = {
+                totalNavs: navs.length,
+                posicion: nav.closest("header, footer, aside, main, section")?.tagName?.toLowerCase() || null,
+                encabezado: nav.querySelector("h1,h2,h3,h4,h5,h6")?.innerText?.trim() || null,
+                enlaces: Array.from(nav.querySelectorAll("a"))
+                    .slice(0, 5)
+                    .map(a => a.innerText.trim())
+                    .filter(t => t.length > 0)
+            };
+
+            const response = await chrome.runtime.sendMessage({
+                action: "generarAriaLabelNav",
+                navInfo,
+                contexto
+            });
+
+            if (response.success) {
+                nav.setAttribute("aria-label", response.ariaLabel);
+                procesadas++;
+                console.log(`Nav etiquetada: "${response.ariaLabel}"`);
+            } else {
+                throw new Error(response.error);
+            }
+        } catch (error) {
+            console.error("Error etiquetando nav:", error.message);
+            nav.setAttribute("aria-label", "Navegación");
+            errores++;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    console.log(`Navegaciones: ${procesadas} etiquetadas con IA, ${errores} errores`);
+}
+
+//Función que orrige saltos de nivel en encabezados usando aria-level así no cambia el componente para no romper el estilo de la página
+function procesarNivelesEncabezados() {
+    const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"))
+        .filter(h => {
+            const style = window.getComputedStyle(h);
+            //Se excluyen los encabezados inyectados por la extensión para que no empiece a contar por ejemplo el resumen generado 
+            return style.display !== "none" && style.visibility !== "hidden" && !h.hasAttribute("data-ai-generated");
+        });
+
+    if (headings.length === 0) return;
+
+    let nivelActual = 0;
+    let corregidos = 0;
+
+    headings.forEach(heading => {
+        //Controla si ya tiene aria-level
+        const nivelTag = parseInt(heading.tagName[1]);
+        const nivel = parseInt(heading.getAttribute("aria-level")) || nivelTag;
+
+        if (nivelActual === 0) {
+            nivelActual = nivel;
+            return;
+        }
+
+        if (nivel > nivelActual + 1) {
+            //Cuando se detecta un salto se corrige el nivel
+            const nivelCorregido = nivelActual + 1;
+            heading.setAttribute("data-ai-original-aria-level", heading.hasAttribute("aria-level") ? heading.getAttribute("aria-level") : "__removed__");
+            heading.setAttribute("aria-level", String(nivelCorregido));
+            heading.setAttribute("data-ai-generated", "true");
+            console.log(`Encabezado corregido: <${heading.tagName.toLowerCase()}> nivel ${nivel} → ${nivelCorregido} | "${heading.innerText.trim().substring(0, 50)}"`);
+            nivelActual = nivelCorregido;
+            corregidos++;
+        } else {
+            nivelActual = nivel;
+        }
+    });
+
+    if (corregidos > 0) {
+        console.log(`Niveles de encabezado: ${corregidos} saltos corregidos`);
+    } else {
+        console.log("Niveles de encabezado: estructura correcta, sin saltos detectados");
+    }
+}
+
 async function iniciarAsistente(){
     console.log("Iniciando asistente de accesibilidad...");
     
@@ -787,6 +906,9 @@ async function iniciarAsistente(){
     try {
         await procesarImagenesSinAlt();
         await procesarSVGsSinAlt();
+
+        procesarNivelesEncabezados();
+        await procesarNav();
 
         await procesarElementosInteractivos();
         await procesarFormularios();
@@ -828,6 +950,7 @@ function desactivarAsistente() {
         restoreAttr("data-ai-original-aria-description", "aria-description");
         restoreAttr("data-ai-original-role", "role");
         restoreAttr("data-ai-original-aria-hidden", "aria-hidden");
+        restoreAttr("data-ai-original-aria-level", "aria-level");
 
         el.removeAttribute("data-ai-generated");
     });
