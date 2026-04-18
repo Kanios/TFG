@@ -51,6 +51,51 @@ function convertirImagenABase64(img) {
     });
 }
 
+//Función auxiliar para convertir SVG a base64
+function convertirSVGABase64(svgEl) {
+    return new Promise((resolve, reject) => {
+        try {
+            const bbox = svgEl.getBoundingClientRect();
+            const width  = Math.round(bbox.width)  || parseInt(svgEl.getAttribute("width"))  || 100;
+            const height = Math.round(bbox.height) || parseInt(svgEl.getAttribute("height")) || 100;
+
+            const svgData = new XMLSerializer().serializeToString(svgEl);
+            const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(svgBlob);
+
+            const canvas = document.createElement("canvas");
+            canvas.width  = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    ctx.drawImage(img, 0, 0, width, height);
+                    URL.revokeObjectURL(url);
+                    canvas.toBlob(blob => {
+                        if (!blob) { reject(new Error("No se pudo crear blob del SVG")); return; }
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result.split(",")[1]);
+                        reader.onerror  = () => reject(new Error("Error leyendo blob del SVG"));
+                        reader.readAsDataURL(blob);
+                    }, "image/jpeg", 0.9);
+                } catch (e) {
+                    URL.revokeObjectURL(url);
+                    reject(e);
+                }
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error("Error cargando SVG como imagen"));
+            };
+            img.src = url;
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
+
 //Procesamiento de imagenes sin alt text
 async function procesarImagenesSinAlt() {
     const imagenesSinAlt = document.querySelectorAll("img:not([alt]), img[alt='']");
@@ -94,13 +139,16 @@ async function procesarImagenesSinAlt() {
             }
 
             console.log(`Generando alt text para imagen ${i + 1}/${limite}...`);
+            const enlacePadre = img.closest("a");
+            const esSoloContenidoEnlace = enlacePadre && enlacePadre.innerText.trim().length === 0;
+            const contextoImagen = esSoloContenidoEnlace ? `${contexto} | Esta imagen es el único contenido del enlace que apunta a: ${enlacePadre.href || "URL desconocida"}`: contexto;
             
             const imagenBase64 = await convertirImagenABase64(img);
             
             const response = await chrome.runtime.sendMessage({
                 action: "generarAltText",
                 imagenBase64: imagenBase64,
-                contexto: contexto
+                contexto: contextoImagen
             });
 
             if (response.success) {
@@ -127,6 +175,91 @@ async function procesarImagenesSinAlt() {
     }
 }
 
+
+//Procesamiento de imagenes svg sin alt text
+async function procesarSVGsSinAlt() {
+    const selectoresInteractivos = "button, a, [role='button'], [role='link'], [role='tab'], [role='menuitem']";
+
+    const svgsSinAlt = Array.from(document.querySelectorAll("svg")).filter(svg => {
+        if (svg.hasAttribute("data-ai-generated")) return false;
+        // SVGs explícitamente decorativos
+        if (svg.getAttribute("aria-hidden") === "true") return false;
+        if (["presentation", "none"].includes(svg.getAttribute("role"))) return false;
+        // SVGs demasiado pequeños posiblmente decorativos
+        const bbox = svg.getBoundingClientRect();
+        if (bbox.width < 20 || bbox.height < 20) return false;
+        // SVGs que ya tienen nombre accesible: aria-label, aria-labelledby válido o <title> con texto
+        if (svg.hasAttribute("aria-label") && svg.getAttribute("aria-label").trim().length > 0) return false;
+        if (svg.hasAttribute("aria-labelledby")) {
+            const tieneRefValida = svg.getAttribute("aria-labelledby").trim().split(/\s+/).some(id => {
+                const ref = document.getElementById(id);
+                return ref && ref.textContent.trim().length > 0;
+            });
+            if (tieneRefValida) return false;
+        }
+        const titulo = svg.querySelector(":scope > title");
+        if (titulo && titulo.textContent.trim().length > 0) return false;
+        return true;
+    });
+
+    console.log(`Encontrados ${svgsSinAlt.length} SVGs sin etiqueta accesible`);
+    if (svgsSinAlt.length === 0) return;
+
+    const contexto = obtenerContextoPagina();
+    let procesados = 0;
+    let ocultados = 0;
+    let errores = 0;
+    const limite = Math.min(svgsSinAlt.length, 8);
+
+    for (let i = 0; i < limite; i++) {
+        const svg = svgsSinAlt[i];
+
+        //SVGs dentro de elementos interactivos se asumen decorativos y se ocultan de los lectores de pantalla para no generar ruido, ya que el aria-label es mejor en el elemento interactivo padre que en el SVG
+        const padreInteractivo = svg.closest(selectoresInteractivos);
+        if (padreInteractivo) {
+            svg.setAttribute("data-ai-original-aria-hidden", svg.hasAttribute("aria-hidden") ? svg.getAttribute("aria-hidden") : "__removed__");
+            svg.setAttribute("aria-hidden", "true");
+            svg.setAttribute("data-ai-generated", "true");
+            ocultados++;
+            console.log(`SVG ${i + 1} ocultado (pertenece a elemento interactivo)`);
+            continue;
+        }
+
+        try {
+            svg.setAttribute("data-ai-original-aria-label", svg.hasAttribute("aria-label") ? svg.getAttribute("aria-label") : "__removed__");
+            svg.setAttribute("data-ai-original-role", svg.hasAttribute("role") ? svg.getAttribute("role") : "__removed__");
+            svg.setAttribute("data-ai-generated", "true");
+
+            const svgBase64 = await convertirSVGABase64(svg);
+            const response = await chrome.runtime.sendMessage({
+                action: "generarAltText",
+                imagenBase64: svgBase64,
+                contexto: contexto
+            });
+
+            if (response.success) {
+                svg.setAttribute("role", "img");
+                svg.setAttribute("aria-label", response.altText);
+                procesados++;
+                console.log(`SVG: aria-label generado: "${response.altText}"`);
+            } else {
+                throw new Error(response.error);
+            }
+        } catch (error) {
+            console.error(`Error procesando SVG ${i + 1}:`, error.message);
+            svg.setAttribute("role", "img");
+            svg.setAttribute("aria-label", "Imagen SVG sin descripción accesible");
+            errores++;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    console.log(`SVGs: ${procesados} descritos con IA, ${ocultados} ocultados (decorativos en interactivos), ${errores} errores`);
+    if (svgsSinAlt.length > limite) {
+        console.log(`Se procesaron solo ${limite} de ${svgsSinAlt.length} SVGs`);
+    }
+}
 
 //procesamiento de elementos interactivos sin aria-label
 
@@ -219,15 +352,24 @@ async function procesarElementosInteractivos() {
 //Función para procesar los formularios sin etiqueta
 async function procesarFormularios() {
     //omitimos inputs tipo hidden ya que no necesitan label y submit porque en caso de que el botón del formulario no tenga texto ni etiqueta lo habrá detectado la función elementos interactivos
-    const elementosTextareaSelect = "input:not([type='hidden']):not([type='submit']), textarea, select";
+    const elementosTextareaSelect = "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']), textarea, select";
     const elementosFormulario = document.querySelectorAll(elementosTextareaSelect);
     const elementosInaccesibles = Array.from(elementosFormulario).filter(el => {
         const tieneAriaLabel = el.hasAttribute("aria-label") && el.getAttribute("aria-label").trim().length > 0;
-        const tieneAriaLabelBy = el.hasAttribute("aria-labelledby");
+
+        //Se controla que los IDsexistan en el DOM y que no esten vacíos
+        const tieneAriaLabelBy = el.hasAttribute("aria-labelledby") &&
+            el.getAttribute("aria-labelledby").trim().split(/\s+/).some(id => {
+                const ref = document.getElementById(id);
+                return ref && ref.textContent.trim().length > 0;
+            });
+
         const tieneTitle = el.hasAttribute("title") && el.getAttribute("title").trim().length > 0;
-        
+
+        //Se valida que la label tenga texto y no esté vacía
         let tieneLabelAsociado = false;
-        if (el.closest("label")) {
+        const labelWrapper = el.closest("label");
+        if (labelWrapper && labelWrapper.innerText.trim().length > 0) {
             tieneLabelAsociado = true;
         }else if (el.id) {
             const labelAsociado = document.querySelector(`label[for="${el.id}"]`);
@@ -237,10 +379,10 @@ async function procesarFormularios() {
         }
         
         return !tieneAriaLabel && !tieneAriaLabelBy && !tieneTitle && !tieneLabelAsociado;
-
     });
-    console.log(`Encontrados ${elementosInaccesibles.length} elementos interactivos sin texto accesible`);
     
+    console.log(`Encontrados ${elementosInaccesibles.length} campos de formulario sin etiqueta accesible`);
+
     if (elementosInaccesibles.length === 0) return;
 
     const contexto = obtenerContextoPagina();
@@ -255,12 +397,17 @@ async function procesarFormularios() {
             el.setAttribute("data-ai-original-aria-label", el.hasAttribute("aria-label") ? el.getAttribute("aria-label") : "__removed__");
             el.setAttribute("data-ai-generated", "true");
 
+            //Se pasa el texto del legend del fieldset como contexto
+            const fieldset = el.closest("fieldset");
+            const legendContext = fieldset?.querySelector("legend")?.innerText?.trim() || null;
+
             const elementInfo = {
                 tagName: el.tagName.toLowerCase(),
                 type: el.type || null,
                 name: el.name || null,
                 id: el.id,
                 placeholder: el.placeholder || null,
+                legendContext,
                 textoVecino: obtenerTextoVecino(el)
             };
             
@@ -282,7 +429,7 @@ async function procesarFormularios() {
             
         } catch (error) {
             console.error(`Error generando aria-label para formulario ${i + 1}:`, error.message);
-            el.setAttribute("aria-label", "Campo de formulario iterativo");
+            el.setAttribute("aria-label", "Campo de formulario interactivo");
             errores++;
         }
         
@@ -639,7 +786,8 @@ async function iniciarAsistente(){
     
     try {
         await procesarImagenesSinAlt();
-        
+        await procesarSVGsSinAlt();
+
         await procesarElementosInteractivos();
         await procesarFormularios();
         await procesarEtiquetasInsuficientes();
@@ -678,6 +826,8 @@ function desactivarAsistente() {
         restoreAttr("data-ai-original-aria-label", "aria-label");
         restoreAttr("data-ai-original-aria-required", "aria-required");
         restoreAttr("data-ai-original-aria-description", "aria-description");
+        restoreAttr("data-ai-original-role", "role");
+        restoreAttr("data-ai-original-aria-hidden", "aria-hidden");
 
         el.removeAttribute("data-ai-generated");
     });
