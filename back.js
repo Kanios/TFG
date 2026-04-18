@@ -304,6 +304,8 @@ async function generarResumenIA(pageInfo) {
     - Sin introducciones como "Esta página..." — empieza directamente con el propósito
     - Usa lenguaje claro y directo, pensado para ser escuchado por usuarios de lectores de pantalla
 
+    Responde directamente con el resumen, sin formato adicional.`;
+
     const requestBody = {
         contents: [{
             parts: [{ text: prompt }]
