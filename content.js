@@ -1,6 +1,3 @@
-//chrome://extensions
-//Para probar la extensión crear un archivo config.js con el siguiente contenido:// const CONFIG = { // GEMINI_API_KEY: "TU_API_KEY_AQUI" // };
-//Para conseguir la key gratuita de Gemini ir a: https://aistudio.google.com/app/api-keys
 //Pruebas: 
 //https://www.lingscars.com/
 //https://www.w3.org/WAI/demos/bad/after/home.html
@@ -9,12 +6,21 @@ console.log("Asistente inteligente de accesibilidad web con IA");
 //Obtener el contexto de la página para enviar a la IA
 function obtenerContextoPagina() {
     const titulo = document.title || "Página sin título";
-    const h1 = document.querySelector("h1");
-    const encabezadoPrincipal = h1 ? h1.innerText : "sin encabezado principal";
-    const metaDescription = document.querySelector('meta[name="description"]');
-    const descripcion = metaDescription ? metaDescription.content : "";
-    
-    return `Título: "${titulo}", Encabezado: "${encabezadoPrincipal}", Descripción: "${descripcion}"`;
+
+    // Se excluyen los h1 inyectados por la extensión
+    const h1 = document.querySelector("h1:not([data-ai-generated])");
+    const encabezadoPrincipal = h1 ? h1.innerText.trim() : "sin encabezado principal";
+
+    // Meta description con og:description
+    const descripcion = document.querySelector('meta[name="description"]')?.content|| document.querySelector('meta[property="og:description"]')?.content|| "";
+
+    // Dominio y ruta sin parámetros ni hash
+    const url = `${location.hostname}${location.pathname}`;
+
+    // Idioma declarado en el HTML con el fin de crear las etiquetas en el idioma de la página
+    const idioma = document.documentElement.lang || "desconocido";
+
+    return `Título: "${titulo}", URL: "${url}", Idioma: "${idioma}", Encabezado: "${encabezadoPrincipal}", Descripción: "${descripcion}"`;
 }
 
 //Función auxiliar para convertir imagena base64
@@ -463,9 +469,10 @@ async function procesarEtiquetasInsuficientes() {
         "untitled", "sin titulo", "default", "null", "undefined", "0"
     ];
 
-    // Expresiones para detectar archivos, nombre solo de imágenes, rutas como "IMG_1234", "DSC001", "Screenshot_2024" o enlaces, o texto que solo tenga símbolos 
+    // Expresiones para detectar archivos, nombre solo de imágenes, rutas como "IMG_1234", "DSC001", "Screenshot_2024" o enlaces, o texto que solo tenga símbolos
     const extensionesRegex = /\.(jpg|jpeg|png|gif|webp|svg|ico|bmp|tiff)$/i;
-    const archivosRegex = /^(img|dsc|screenshot|captura|whatsapp|whatsapp_image)[_\-\s]?\d+/i;
+    //Ampliado para prefijos image_, photo_, pic_ habituales en CMS y redes sociales
+    const archivosRegex = /^(img|image|pic|photo|dsc|screenshot|captura|whatsapp|whatsapp_image)[_\-\s]?\d*/i;
     const rutasRegex = /^(https?:\/\/|www\.|\/|\.\.\/)/i;
     const simbolosRegex = /^[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ]+$/;
 
@@ -476,16 +483,20 @@ async function procesarEtiquetasInsuficientes() {
 
         const textoNorm = normalizarTexto(textoOriginal);
 
-        //Se comprueba si cumple con los patrones y se añade a la lista
+        //Ampliado para comprobar no solo la primera palabra sino también si el texto completo es insuficiente o si tiene pocas palabras y la primera es de la blacklist
+        const palabras = textoNorm.split(/\s+/);
         if (
-            extensionesRegex.test(textoNorm) || 
+            extensionesRegex.test(textoNorm) ||
             archivosRegex.test(textoNorm) ||
-            rutasRegex.test(textoNorm) || 
-            simbolosRegex.test(textoNorm) || 
-            blacklistWCAG.includes(textoNorm)
+            rutasRegex.test(textoNorm) ||
+            simbolosRegex.test(textoNorm) ||
+            blacklistWCAG.includes(textoNorm) ||
+            (palabras.length <= 3 && blacklistWCAG.includes(palabras[0])) ||
+            /^\d+$/.test(textoNorm) ||
+            textoNorm.length <= 2
         ) {
-            elementosInsuficientes.push({ el, textoOriginal});
-        } 
+            elementosInsuficientes.push({ el, textoOriginal });
+        }
     };
 
     // Recopilar imágenes (excluir las ya procesadas por otras funciones)
@@ -615,27 +626,47 @@ async function procesarCamposObligatorios() {
 function obtenerTextoVecino(element) {
     const padre = element.parentElement;
     if (!padre) return "";
-    
+
     const textos = [];
-    
-    //Texto del padre
+
+    //Buscar encabezados más hacia arriba para dar más contexto(máximo 5 niveles)
+    const encabezadoContexto = (() => {
+        let node = element.parentElement;
+        for (let i = 0; i < 5 && node; i++) {
+            const h = node.querySelector(":scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6");
+            if (h && !h.hasAttribute("data-ai-generated")) return h.innerText.trim().substring(0, 80);
+            node = node.parentElement;
+        }
+        return null;
+    })();
+    if (encabezadoContexto) textos.push(encabezadoContexto);
+
+    //Texto directo del padre (solo nodos de texto)
     const textoPadre = Array.from(padre.childNodes)
-        .filter(node => node.nodeType === Node.TEXT_NODE && node !== element)
+        .filter(node => node.nodeType === Node.TEXT_NODE)
         .map(node => node.textContent.trim())
+        .filter(t => t.length > 0)
         .join(" ");
     if (textoPadre) textos.push(textoPadre);
-    
-    // Texto de hermanos cercanos
-    if (element.previousElementSibling) {
-        const textoPrevio = element.previousElementSibling.innerText?.trim();
-        if (textoPrevio) textos.push(textoPrevio);
+
+    //Hermanos cercanos (truncados a 80 caracteres para no saturar el prompt)
+    const textoPrevio = element.previousElementSibling?.innerText?.trim().substring(0, 80);
+    if (textoPrevio) textos.push(textoPrevio);
+    const textoSiguiente = element.nextElementSibling?.innerText?.trim().substring(0, 80);
+    if (textoSiguiente) textos.push(textoSiguiente);
+
+    //Si el contexto recogido es escaso, subir un nivel más
+    if (textos.join(" ").length < 30 && padre.parentElement) {
+        const textoAbuelo = Array.from(padre.parentElement.childNodes)
+            .filter(node => node.nodeType === Node.TEXT_NODE)
+            .map(node => node.textContent.trim())
+            .filter(t => t.length > 0)
+            .join(" ")
+            .substring(0, 80);
+        if (textoAbuelo) textos.push(textoAbuelo);
     }
-    if (element.nextElementSibling) {
-        const textoSiguiente = element.nextElementSibling.innerText?.trim();
-        if (textoSiguiente) textos.push(textoSiguiente);
-    }
-    
-    return textos.join(" ").substring(0, 200); //limitando caracteres
+
+    return textos.join(" | ").substring(0, 250);
 }
 
 //generar resumen general de la página para el usuario
