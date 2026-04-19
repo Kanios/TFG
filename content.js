@@ -195,6 +195,56 @@ async function procesarImagenesSinAlt() {
     if (imagenesSinAlt.length > limite) {
         console.log(`Se procesaron solo ${limite} de ${imagenesSinAlt.length} imágenes`);
     }
+
+    // Elementos con role='img' (no <img> ni <svg>) sin aria-label — se etiquetan con IA basada en contexto de texto
+    const roleImgSinLabel = Array.from(document.querySelectorAll("[role='img']:not(img):not(svg)")).filter(el => {
+        if (el.hasAttribute("data-ai-generated")) return false;
+        if (!esVisible(el)) return false;
+        if (el.hasAttribute("aria-label") && el.getAttribute("aria-label").trim().length > 0) return false;
+        if (el.hasAttribute("aria-labelledby")) {
+            const tieneRefValida = el.getAttribute("aria-labelledby").trim().split(/\s+/).some(id => {
+                const ref = document.getElementById(id);
+                return ref && ref.textContent.trim().length > 0;
+            });
+            if (tieneRefValida) return false;
+        }
+        return true;
+    });
+
+    if (roleImgSinLabel.length > 0) {
+        console.log(`Encontrados ${roleImgSinLabel.length} elementos [role='img'] sin etiqueta accesible`);
+        for (const el of roleImgSinLabel) {
+            try {
+                el.setAttribute("data-ai-original-aria-label", el.hasAttribute("aria-label") ? el.getAttribute("aria-label") : "__removed__");
+                el.setAttribute("data-ai-generated", "true");
+
+                const elementInfo = {
+                    tagName: el.tagName.toLowerCase(),
+                    role: "img",
+                    className: el.className,
+                    id: el.id,
+                    textoVecino: obtenerTextoVecino(el)
+                };
+
+                const response = await chrome.runtime.sendMessage({
+                    action: "generarAriaLabel",
+                    elementInfo,
+                    contexto
+                });
+
+                if (response.success) {
+                    el.setAttribute("aria-label", response.ariaLabel);
+                    console.log(`[role=img] aria-label generado: "${response.ariaLabel}"`);
+                } else {
+                    throw new Error(response.error);
+                }
+            } catch (error) {
+                console.error("Error generando aria-label para [role=img]:", error.message);
+                el.setAttribute("aria-label", "Imagen sin descripción accesible");
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
 }
 
 
@@ -376,7 +426,9 @@ async function procesarElementosInteractivos() {
 //Función para procesar los formularios sin etiqueta
 async function procesarFormularios() {
     //omitimos inputs tipo hidden ya que no necesitan label y submit porque en caso de que el botón del formulario no tenga texto ni etiqueta lo habrá detectado la función elementos interactivos
-    const elementosTextareaSelect = "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']), textarea, select";
+    //Se añaden tipos de roles que pueden tener los formularios(React)
+    const rolesFormulario = "[role='textbox'], [role='combobox'], [role='spinbutton'], [role='slider'], [role='searchbox'], [role='listbox'], [role='checkbox'], [role='radio'], [role='switch']";
+    const elementosTextareaSelect = `input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']), textarea, select, ${rolesFormulario}`;
     const elementosFormulario = document.querySelectorAll(elementosTextareaSelect);
     const elementosInaccesibles = Array.from(elementosFormulario).filter(el => {
         if (!esVisible(el)) return false;
@@ -428,10 +480,11 @@ async function procesarFormularios() {
 
             const elementInfo = {
                 tagName: el.tagName.toLowerCase(),
+                role: el.getAttribute("role") || null,
                 type: el.type || null,
                 name: el.name || null,
                 id: el.id,
-                placeholder: el.placeholder || null,
+                placeholder: el.getAttribute("placeholder") || null,
                 legendContext,
                 textoVecino: obtenerTextoVecino(el)
             };
@@ -536,6 +589,12 @@ async function procesarEtiquetasInsuficientes() {
         evaluarElemento(el, texto);
     });
 
+    //Elementos con role='img' que ya tienen aria-label pero puede ser insuficiente
+    const roleImgConLabel = document.querySelectorAll("[role='img'][aria-label]:not(img):not(svg)");
+    roleImgConLabel.forEach(el => {
+        if (!el.hasAttribute("data-ai-generated") && esVisible(el)) evaluarElemento(el, el.getAttribute("aria-label"));
+    });
+
     console.log(`Elementos insuficientes detectados: ${elementosInsuficientes.length}`);
 
     if (elementosInsuficientes.length === 0) return;
@@ -610,7 +669,8 @@ async function procesarEtiquetasInsuficientes() {
 
 //Procesar campos obligatorios no accesible
 async function procesarCamposObligatorios() {
-    const Campos = document.querySelectorAll("input:not([type='hidden']):not([type='submit']), textarea, select");
+    const rolesFormulario = "[role='textbox'], [role='combobox'], [role='spinbutton'], [role='slider'], [role='searchbox'], [role='listbox'], [role='checkbox'], [role='radio'], [role='switch']";
+    const Campos = document.querySelectorAll(`input:not([type='hidden']):not([type='submit']), textarea, select, ${rolesFormulario}`);
     let camposMejorados = 0;
     Campos.forEach(campo => {
         if (!esVisible(campo)) return;
@@ -951,7 +1011,7 @@ async function procesarNav() {
 
 //Función que orrige saltos de nivel en encabezados usando aria-level así no cambia el componente para no romper el estilo de la página
 function procesarNivelesEncabezados() {
-    const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"))
+    const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6, [role='heading']"))
         .filter(h => {
             //Se excluyen los encabezados inyectados por la extensión para que no empiece a contar por ejemplo el resumen generado
             if (h.hasAttribute("data-ai-generated")) return false;
@@ -967,8 +1027,9 @@ function procesarNivelesEncabezados() {
 
     headings.forEach(heading => {
         //Controla si ya tiene aria-level
-        const nivelTag = parseInt(heading.tagName[1]);
-        const nivel = parseInt(heading.getAttribute("aria-level")) || nivelTag;
+        // Para h1-h6 el nivel viene del nombre de etiqueta, para [role='heading'] con el aria-level sino se asume que es un h2
+        const nivelTag = heading.tagName.match(/^H[1-6]$/i) ? parseInt(heading.tagName[1]) : null;
+        const nivel = parseInt(heading.getAttribute("aria-level")) || nivelTag || 2;
 
         if (nivelActual === 0) {
             nivelActual = nivel;
@@ -996,6 +1057,84 @@ function procesarNivelesEncabezados() {
     }
 }
 
+// Función para tablas de datos sin nombre accesible
+async function procesarTablas() {
+    // Solo tablas de datos (con al menos un <th>) ya que las tablas de maquetación no tienen <th> y no necesitan nombre
+    const tablas = Array.from(document.querySelectorAll("table")).filter(tabla => {
+        if (!esVisible(tabla)) return false;
+        if (!tabla.querySelector("th")) return false;
+        if (tabla.hasAttribute("aria-label") && tabla.getAttribute("aria-label").trim().length > 0) return false;
+        if (tabla.hasAttribute("aria-labelledby")) {
+            const tieneRefValida = tabla.getAttribute("aria-labelledby").trim().split(/\s+/).some(id => {
+                const ref = document.getElementById(id);
+                return ref && ref.textContent.trim().length > 0;
+            });
+            if (tieneRefValida) return false;
+        }
+        const caption = tabla.querySelector("caption");
+        if (caption && caption.innerText.trim().length > 0) return false;
+        return true;
+    });
+
+    console.log(`Encontradas ${tablas.length} tablas de datos sin nombre accesible`);
+    if (tablas.length === 0) return;
+
+    const contexto = obtenerContextoPagina();
+    let procesadas = 0;
+    let errores = 0;
+
+    for (const tabla of tablas) {
+        try {
+            tabla.setAttribute("data-ai-original-aria-label", tabla.hasAttribute("aria-label") ? tabla.getAttribute("aria-label") : "__removed__");
+            tabla.setAttribute("data-ai-generated", "true");
+
+            // Encabezados de columna/fila y muestra de primeras filas de datos para dar contexto a la IA
+            const encabezados = Array.from(tabla.querySelectorAll("th"))
+                .slice(0, 8)
+                .map(th => th.innerText.trim())
+                .filter(t => t.length > 0);
+
+            const muestrasFilas = Array.from(tabla.querySelectorAll("tr"))
+                .slice(1, 3)
+                .map(tr =>
+                    Array.from(tr.querySelectorAll("td"))
+                        .slice(0, 4)
+                        .map(td => td.innerText.trim())
+                        .join(" | ")
+                )
+                .filter(t => t.length > 0);
+
+            const tablaInfo = {
+                encabezados,
+                muestrasFilas,
+                textoVecino: obtenerTextoVecino(tabla)
+            };
+
+            const response = await chrome.runtime.sendMessage({
+                action: "generarAriaLabelTabla",
+                tablaInfo,
+                contexto
+            });
+
+            if (response.success) {
+                tabla.setAttribute("aria-label", response.ariaLabel);
+                procesadas++;
+                console.log(`Tabla etiquetada: "${response.ariaLabel}"`);
+            } else {
+                throw new Error(response.error);
+            }
+        } catch (error) {
+            console.error("Error etiquetando tabla:", error.message);
+            tabla.setAttribute("aria-label", "Tabla de datos");
+            errores++;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    console.log(`Tablas: ${procesadas} etiquetadas con IA, ${errores} errores`);
+}
+
 async function iniciarAsistente(){
     console.log("Iniciando asistente de accesibilidad...");
     
@@ -1010,7 +1149,7 @@ async function iniciarAsistente(){
 
         procesarNivelesEncabezados();
         await procesarNav();
-
+        await procesarTablas();
         await procesarElementosInteractivos();
         await procesarFormularios();
         await procesarEtiquetasInsuficientes();

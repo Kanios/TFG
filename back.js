@@ -61,6 +61,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch(error => sendResponse({ success: false, error: error.message }));
         return true;
     }
+    if (request.action === "generarAriaLabelTabla") {
+        generarAriaLabelTablaIA(request.tablaInfo, request.contexto)
+            .then(ariaLabel => sendResponse({ success: true, ariaLabel }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
 });
 
 //Cambio Toggle para que si el usuario configura un atajo de teclado para la extensión en los ajustes de Google se active o desactive la extensión
@@ -270,6 +276,40 @@ async function generarAriaLabelNavIA(navInfo, contexto) {
         return data.candidates[0].content.parts[0].text.trim().replace(/['"]/g, "");
     } catch (error) {
         console.error("Error generando aria-label para nav:", error);
+        throw error;
+    }
+}
+
+//Función para generar aria-label para tablas sin encabezado
+async function generarAriaLabelTablaIA(tablaInfo, contexto) {
+    const apiKey = CONFIG.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
+        throw new Error("API Key no configurada en config.js");
+    }
+
+    const prompt = `Eres un experto en accesibilidad web. Genera un aria-label descriptivo para una tabla de datos sin nombre accesible, siguiendo WCAG 1.3.1.
+    - Encabezados de columna/fila: ${tablaInfo.encabezados?.join(", ") || "ninguno"}
+    - Muestra de primeras filas: ${tablaInfo.muestrasFilas?.join(" / ") || "no disponible"}
+    - Texto cercano en el DOM: ${tablaInfo.textoVecino || "ninguno"}
+    - Contexto de la página: ${contexto}
+
+    Reglas:
+    - Describe qué datos contiene la tabla, no su estructura
+    - Ejemplos de buenos aria-label: "Resultados de búsqueda de vuelos", "Comparativa de precios de tarifas", "Horario de clases del primer semestre", "Listado de empleados por departamento"
+    - Responde SOLO con el aria-label, máximo 6 palabras, sin comillas.`;
+
+    const requestBody = { contents: [{ parts: [{ text: prompt }] }] };
+
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) }
+        );
+        if (!response.ok) throw new Error(`Error de Gemini API: ${await response.text()}`);
+        const data = await response.json();
+        return data.candidates[0].content.parts[0].text.trim().replace(/['"]/g, "");
+    } catch (error) {
+        console.error("Error generando aria-label para tabla:", error);
         throw error;
     }
 }
