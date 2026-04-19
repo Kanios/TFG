@@ -102,6 +102,17 @@ function convertirSVGABase64(svgEl) {
     });
 }
 
+//Función auxiliar para descartar elementos que se han especificado como invisibles
+function esVisible(el) {
+    if (el.closest("[aria-hidden='true']")) return false;
+    const role = el.getAttribute("role");
+    if (role === "presentation" || role === "none") return false;
+    if (el.closest("noscript")) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    return true;
+}
+
 //Procesamiento de imagenes sin alt text
 async function procesarImagenesSinAlt() {
     const imagenesSinAlt = document.querySelectorAll("img:not([alt]), img[alt='']");
@@ -120,6 +131,11 @@ async function procesarImagenesSinAlt() {
     
     for (let i = 0; i < limite; i++) {
         const img = imagenesSinAlt[i];
+
+        if (!esVisible(img)) {
+            omitidas++;
+            continue;
+        }
         
         try {
             img.setAttribute("data-ai-original-alt", img.hasAttribute("alt") ? img.getAttribute("alt") : "__removed__");
@@ -188,9 +204,7 @@ async function procesarSVGsSinAlt() {
 
     const svgsSinAlt = Array.from(document.querySelectorAll("svg")).filter(svg => {
         if (svg.hasAttribute("data-ai-generated")) return false;
-        // SVGs explícitamente decorativos
-        if (svg.getAttribute("aria-hidden") === "true") return false;
-        if (["presentation", "none"].includes(svg.getAttribute("role"))) return false;
+        if (!esVisible(svg)) return false;
         // SVGs demasiado pequeños posiblmente decorativos
         const bbox = svg.getBoundingClientRect();
         if (bbox.width < 20 || bbox.height < 20) return false;
@@ -275,9 +289,13 @@ async function procesarElementosInteractivos() {
     
     //Filtrar los que no tienen texto accesible
     const elementosInaccesibles = Array.from(elementosInteractivos).filter(el => {
+        if (!esVisible(el)) return false;
         const tieneTextoVisible = el.innerText && el.innerText.trim().length > 0;
         const tieneAriaLabel = el.hasAttribute("aria-label") && el.getAttribute("aria-label").trim().length > 0;
-        const tieneAriaLabelBy = el.hasAttribute("aria-labelledby");
+        const tieneAriaLabelBy = el.hasAttribute("aria-labelledby") && el.getAttribute("aria-labelledby").trim().split(/\s+/).some(id => {
+                const ref = document.getElementById(id);
+                return ref && ref.textContent.trim().length > 0;
+            });
         
         //Controlar que si hereda el alt de una imagen
         const imagenConAlt = el.querySelectorAll("img[alt]");
@@ -361,6 +379,7 @@ async function procesarFormularios() {
     const elementosTextareaSelect = "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']), textarea, select";
     const elementosFormulario = document.querySelectorAll(elementosTextareaSelect);
     const elementosInaccesibles = Array.from(elementosFormulario).filter(el => {
+        if (!esVisible(el)) return false;
         const tieneAriaLabel = el.hasAttribute("aria-label") && el.getAttribute("aria-label").trim().length > 0;
 
         //Se controla que los IDsexistan en el DOM y que no esten vacíos
@@ -503,7 +522,7 @@ async function procesarEtiquetasInsuficientes() {
     const imagenes = document.querySelectorAll("img[alt]");
 
     imagenes.forEach(img => {
-        if (!img.hasAttribute("data-ai-generated")) evaluarElemento(img, img.getAttribute("alt"));
+        if (!img.hasAttribute("data-ai-generated") && esVisible(img)) evaluarElemento(img, img.getAttribute("alt"));
     });
 
     // Recopilar elementos interactivos (excluir los ya procesados)
@@ -512,6 +531,7 @@ async function procesarEtiquetasInsuficientes() {
     
     elementosInteractivos.forEach(el => {
         if (el.hasAttribute("data-ai-generated")) return;
+        if (!esVisible(el)) return;
         const texto = el.getAttribute("aria-label") || el.innerText;
         evaluarElemento(el, texto);
     });
@@ -593,29 +613,76 @@ async function procesarCamposObligatorios() {
     const Campos = document.querySelectorAll("input:not([type='hidden']):not([type='submit']), textarea, select");
     let camposMejorados = 0;
     Campos.forEach(campo => {
-        let esObligatorio = campo.hasAttribute("required") || campo.getAttribute("aria-required") === "true";
+        if (!esVisible(campo)) return;
+        //Cambio se elimina la comprobación de aria-required ya que lo comprueba en el if de más abajo
+        if (
+            campo.hasAttribute("required") ||
+            campo.getAttribute("aria-required") === "true"
+        ) {
+            return;
+        }
+
         const label = campo.id ? document.querySelector(`label[for="${campo.id}"]`) : campo.closest("label");
         const textoLabel = label ? label.innerText.trim() : "";
-        const placeholder = campo.getAttribute("placeholder") || "";
+        const placeholder = (campo.getAttribute("placeholder") || "").toLowerCase();
 
-        if(!esObligatorio){
-            const textoLabelMin = textoLabel.toLowerCase();
-            const placeholderMin = placeholder.toLowerCase();
-            if(textoLabelMin.includes("obligatorio") || placeholderMin.includes("obligatorio") || textoLabel.includes("*")|| placeholder.includes("*")){
-                esObligatorio = true;
+        //Si incluye obligatorio en el label o placeholder se asume que es obligatorio aunque no tenga el atributo required ya es accesible para los lectores de pantalla 
+        if (textoLabel.includes("obligatorio") || textoLabel.includes("required") || textoLabel.includes("requerido")) {
+            return;
+        }
+
+        let elementoInaccesible =
+            textoLabel.includes("*") ||
+            placeholder.includes("*") ||
+            placeholder.includes("obligatorio") ||
+            placeholder.includes("required") ||
+            placeholder.includes("requerido");
+
+        //comprobar si el campo está en un fieldset cuyo legend indica que son obligatorios
+        if (!elementoInaccesible) {
+            const fieldset = campo.closest("fieldset");
+            if (fieldset) {
+                const textoLeyenda = (fieldset.querySelector("legend")?.innerText || "").toLowerCase();
+                if (
+                    textoLeyenda.includes("obligatorio") ||
+                    textoLeyenda.includes("required") ||
+                    textoLeyenda.includes("requerido") ||
+                    textoLeyenda.includes("*")
+                ) {
+                    elementoInaccesible = true;
+                }
             }
         }
-        if(esObligatorio && campo.getAttribute("aria-required") !== "true"){
-            campo.setAttribute("data-ai-original-aria-required", campo.hasAttribute("aria-required") ? campo.getAttribute("aria-required") : "__removed__");
-            campo.setAttribute("aria-required", "true");
-            const descActual = campo.getAttribute("aria-description") || "";
-            if(!descActual.toLowerCase().includes("obligatorio")){
-                campo.setAttribute("data-ai-original-aria-description", campo.hasAttribute("aria-description") ? campo.getAttribute("aria-description") : "__removed__");
-                campo.setAttribute("aria-description", (descActual + " Campo obligatorio.").trim());
+
+        //comprobar si el formulario tiene un mensaje en su contenido que indique que los campos son obligatorios 
+        if (!elementoInaccesible) {
+            const formulario = campo.closest("form");
+            if (formulario) {
+                const textoMensajes = Array.from(
+                    formulario.querySelectorAll("p, span, small, em, strong, li, div")
+                )
+                .filter(el => !el.querySelector("input, select, textarea, button"))
+                .map(el => el.innerText.trim().toLowerCase())
+                .join(" ");
+
+                if (
+                    textoMensajes.includes("todos los campos son obligatorios") ||
+                    textoMensajes.includes("all fields are required") ||
+                    textoMensajes.includes("campos obligatorios") ||
+                    textoMensajes.includes("campos requeridos") ||
+                    /\*\s*(son\s+)?(obligatorios?|requeridos?|required)/i.test(textoMensajes)
+                ) {
+                    elementoInaccesible = true;
+                }
             }
-            campo.setAttribute("data-ai-generated", "true");
-            camposMejorados++;
         }
+
+        if (!elementoInaccesible) return;
+
+        campo.setAttribute("data-ai-original-aria-required", campo.hasAttribute("aria-required") ? campo.getAttribute("aria-required") : "__removed__");
+        campo.setAttribute("aria-required", "true");
+        campo.setAttribute("data-ai-generated", "true");
+        camposMejorados++;
     });
     if(camposMejorados > 0){
         console.log(`Se han mejorado ${camposMejorados} campos de formulario para indicar que son obligatorios.`);
@@ -820,6 +887,7 @@ async function procesarNav() {
     console.log(`Encontradas ${navs.length} navegaciones — comprobando etiquetas`);
 
     const sinEtiquetar = navs.filter(nav => {
+        if (!esVisible(nav)) return false;
         if (nav.hasAttribute("aria-label") && nav.getAttribute("aria-label").trim().length > 0) return false;
         if (nav.hasAttribute("title") && nav.getAttribute("title").trim().length > 0) return false;
         if (nav.hasAttribute("aria-labelledby")) {
@@ -885,9 +953,11 @@ async function procesarNav() {
 function procesarNivelesEncabezados() {
     const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, h5, h6"))
         .filter(h => {
+            //Se excluyen los encabezados inyectados por la extensión para que no empiece a contar por ejemplo el resumen generado
+            if (h.hasAttribute("data-ai-generated")) return false;
+            if (h.closest("[aria-hidden='true']") || h.closest("noscript")) return false;
             const style = window.getComputedStyle(h);
-            //Se excluyen los encabezados inyectados por la extensión para que no empiece a contar por ejemplo el resumen generado 
-            return style.display !== "none" && style.visibility !== "hidden" && !h.hasAttribute("data-ai-generated");
+            return style.display !== "none" && style.visibility !== "hidden";
         });
 
     if (headings.length === 0) return;
