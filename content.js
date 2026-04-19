@@ -855,8 +855,6 @@ async function generarResumen(configuracion = {}, resultados = {}) {
         encabezadoPrincipal,
         descripcionMeta,
         colores,
-            imagenes
-        },
         formularios: totalFormularios > 0 ? `${totalFormularios} formulario(s) con ${totalCampos} campo(s) en total` : null,
         informeMejoras
     };
