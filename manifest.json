@@ -5,7 +5,8 @@
     "description": "Prototipo para mejorar la accesibilidad en páginas web con IA",
     "permissions": [
         "activeTab",
-        "scripting"
+        "scripting",
+        "storage"
     ],
     "host_permissions": [
         "https://generativelanguage.googleapis.com/*",

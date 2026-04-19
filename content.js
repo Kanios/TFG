@@ -102,6 +102,20 @@ function convertirSVGABase64(svgEl) {
     });
 }
 
+//El popup la usará para activar/desactivar funcionalidades
+function obtenerConfiguracion() {
+    const defaults = { mostrarColores: true };
+    if (!chrome?.storage?.sync) {
+        console.warn("chrome.storage no disponible — usando configuración por defecto");
+        return Promise.resolve(defaults);
+    }
+    return new Promise(resolve => {
+        chrome.storage.sync.get("configuracion", (data) => {
+            resolve(data.configuracion || defaults);
+        });
+    });
+}
+
 //Función auxiliar para descartar elementos que se han especificado como invisibles
 function esVisible(el) {
     if (el.closest("[aria-hidden='true']")) return false;
@@ -245,6 +259,7 @@ async function procesarImagenesSinAlt() {
             await new Promise(resolve => setTimeout(resolve, 500));
         }
     }
+    return { procesadas, errores, omitidas };
 }
 
 
@@ -329,6 +344,7 @@ async function procesarSVGsSinAlt() {
     if (svgsSinAlt.length > limite) {
         console.log(`Se procesaron solo ${limite} de ${svgsSinAlt.length} SVGs`);
     }
+    return { procesados, ocultados, errores };
 }
 
 //procesamiento de elementos interactivos sin aria-label
@@ -421,6 +437,7 @@ async function procesarElementosInteractivos() {
     if (elementosInaccesibles.length > limite) {
         console.log(`Se procesaron solo ${limite} de ${elementosInaccesibles.length} elementos (límite del prototipo)`);
     }
+    return { procesados, errores };
 }
 
 //Función para procesar los formularios sin etiqueta
@@ -518,6 +535,7 @@ async function procesarFormularios() {
     if (elementosInaccesibles.length > limite) {
         console.log(`Se procesaron solo ${limite} de ${elementosInaccesibles.length} elementos (límite del prototipo)`);
     }
+    return { procesados, errores };
 }
 
 //Procesar etiquetas existentes pero insuficientes (primer borrador)
@@ -601,7 +619,8 @@ async function procesarEtiquetasInsuficientes() {
 
     const contexto = obtenerContextoPagina();
     const limite = Math.min(elementosInsuficientes.length, 10);
-    let corregidos = 0;
+    let corregidosImagenes = 0;
+    let corregidosInteractivos = 0;
     let errores = 0;
 
     for (let i = 0; i < limite; i++) {
@@ -622,7 +641,7 @@ async function procesarEtiquetasInsuficientes() {
 
                 if (response.success) {
                     el.setAttribute("alt", response.altText);
-                    corregidos++;
+                    corregidosImagenes++;
                     console.log(`[EtiquetaInsuficiente] Alt corregido: "${textoOriginal}" → "${response.altText}"`);
                 } else {
                     throw new Error(response.error);
@@ -634,7 +653,6 @@ async function procesarEtiquetasInsuficientes() {
                 const elementInfo = {
                     tagName: el.tagName.toLowerCase(),
                     role: el.getAttribute("role") || null,
-                    className: el.className,
                     id: el.id,
                     href: el.href || null,
                     textoVecino: obtenerTextoVecino(el)
@@ -647,7 +665,7 @@ async function procesarEtiquetasInsuficientes() {
 
                 if (response.success) {
                     el.setAttribute("aria-label", response.ariaLabel);
-                    corregidos++;
+                    corregidosInteractivos++;
                     console.log(`[EtiquetaInsuficiente] Aria-label corregido: "${textoOriginal}" → "${response.ariaLabel}"`);
                 } else {
                     throw new Error(response.error);
@@ -661,10 +679,11 @@ async function procesarEtiquetasInsuficientes() {
         await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    console.log(`Etiquetas insuficientes: ${corregidos} corregidas, ${errores} errores`);
+    console.log(`Etiquetas insuficientes: ${corregidosImagenes + corregidosInteractivos} corregidas (${corregidosImagenes} imágenes, ${corregidosInteractivos} interactivos), ${errores} errores`);
     if (elementosInsuficientes.length > limite) {
         console.log(`Se procesaron solo ${limite} de ${elementosInsuficientes.length} elementos`);
     }
+    return { corregidosImagenes, corregidosInteractivos, errores };
 }
 
 //Procesar campos obligatorios no accesible
@@ -747,6 +766,7 @@ async function procesarCamposObligatorios() {
     if(camposMejorados > 0){
         console.log(`Se han mejorado ${camposMejorados} campos de formulario para indicar que son obligatorios.`);
     }
+    return { camposMejorados };
 }
 
 //Función auxiliar para obtener texto de elementos vecinos para generar contexto
@@ -798,75 +818,60 @@ function obtenerTextoVecino(element) {
 
 //generar resumen general de la página para el usuario
 
-async function generarResumen() {
-    const titulo = document.title || "Página sin título";
-    const h1 = document.querySelector("h1");
-    const encabezadoPrincipal = h1 ? h1.innerText : "sin encabezado principal";
-    
-    //Recopilar información relevante para el resumen
-    const links = document.querySelectorAll("a").length;
-    const botones = document.querySelectorAll("button").length;
-    const imagenes = document.querySelectorAll("img").length;
-    const nav = document.querySelector("nav");
-    const navText = nav ? nav.innerText.substring(0, 500) : "";
-    const tieneNav = nav ? true : false;
-    
-    //Obtener colores dominantes de la página
-    const colores = obtenerColoresDominantes();
-    
-    const meta = document.querySelector('meta[name="description"]');
-    const descripcionMeta = meta ? meta.content : "";
-    
-    const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
-        .slice(0, 5)
-        .map(h => h.innerText.trim())
-        .filter(text => text.length > 0)
-        .join(", ");
-    
-    //Obtener algunos párrafos iniciales
-    const parrafos = Array.from(document.querySelectorAll("p"))
-        .slice(0, 3)
-        .map(p => p.innerText.trim())
-        .filter(text => text.length > 0)
-        .join(" ")
-        .substring(0, 300);
-    
+async function generarResumen(configuracion = {}, resultados = {}) {
+    const descripcionMeta = document.querySelector('meta[name="description"]')?.content|| document.querySelector('meta[property="og:description"]')?.content|| "";
+
+    const colores = configuracion.mostrarColores !== false ? obtenerColoresDominantes() : null;
+
+    // Formularios presentes en la página
+    const totalFormularios = document.querySelectorAll("form").length;
+    const totalCampos = document.querySelectorAll(
+        "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']), textarea, select"
+    ).length;
+
+    //Informar las mejoras de la extensión
+    const totalImgs   = (resultados.imagenesAlt || 0) + (resultados.svgsDesc || 0) + (resultados.insuficientesImagenes || 0);
+    const totalInteractivos = (resultados.interactivos || 0) + (resultados.insuficientesInteractivos || 0);
+    const partesInforme = [];
+    if (totalImgs > 0)                       partesInforme.push(`${totalImgs} imagen(es) sin descripción`);
+    if (totalInteractivos > 0)               partesInforme.push(`${totalInteractivos} botón(es) o enlace(s) sin etiqueta`);
+    if (resultados.formulariosCampos > 0)    partesInforme.push(`${resultados.formulariosCampos} campo(s) de formulario sin etiqueta`);
+    if (resultados.camposObligatorios > 0)   partesInforme.push(`${resultados.camposObligatorios} campo(s) obligatorio(s) sin marcar`);
+    if (resultados.navs > 0)                 partesInforme.push(`${resultados.navs} menú(s) de navegación sin etiqueta`);
+    if (resultados.tablas > 0)               partesInforme.push(`${resultados.tablas} tabla(s) sin nombre accesible`);
+    if (resultados.encabezados > 0)          partesInforme.push(`${resultados.encabezados} nivel(es) de encabezado corregido(s)`);
+
+    const totalMejorado = totalImgs + totalInteractivos + (resultados.formulariosCampos || 0) + (resultados.camposObligatorios || 0) + (resultados.navs || 0) + (resultados.tablas || 0) + (resultados.encabezados || 0);
+
+    const informeMejoras = totalMejorado > 0 ? `${totalMejorado} elemento(s) mejorado(s): ${partesInforme.join(", ")}.` : "No se han detectado problemas de accesibilidad en esta página.";
+
+    const h1 = document.querySelector("h1:not([data-ai-generated])");
+    const encabezadoPrincipal = h1 ? h1.innerText.trim() : null;
+
     const pageInfo = {
-        titulo,
+        titulo: document.title || "Página sin título",
+        url: `${location.hostname}${location.pathname}`,
+        idioma: document.documentElement.lang || "desconocido",
         encabezadoPrincipal,
         descripcionMeta,
-        headings,
-        parrafos,
-        tieneNav,
-        navText,
         colores,
-        stats: {
-            links,
-            botones,
             imagenes
         },
-        url: window.location.href
+        formularios: totalFormularios > 0 ? `${totalFormularios} formulario(s) con ${totalCampos} campo(s) en total` : null,
+        informeMejoras
     };
-    
+
     try {
         console.log("Generando resumen accesible con IA...");
-        
         const response = await chrome.runtime.sendMessage({
             action: "generarResumen",
-            pageInfo: pageInfo
+            pageInfo
         });
-        
-        if (response.success) {
-            return response.summary;
-        } else {
-            throw new Error(response.error);
-        }
+        if (response.success) return response.summary;
+        throw new Error(response.error);
     } catch (error) {
         console.error("Error generando resumen con IA:", error);
-        //Resumen básico en caso de error
-        return `Esta página titulada "${titulo}" presenta como encabezado principal "${encabezadoPrincipal}".
-        La página ${tieneNav ? 'incluye un menú de navegación' : 'no tiene menú de navegación detectado'}.
-        Y contiene aproximadamente ${links} enlaces, ${botones} botones y ${imagenes} imágenes.`;
+        return `${document.title || "Página sin título"}. ${informeMejoras}`;
     }
 }
 
@@ -1007,6 +1012,7 @@ async function procesarNav() {
     }
 
     console.log(`Navegaciones: ${procesadas} etiquetadas con IA, ${errores} errores`);
+    return { procesadas, errores };
 }
 
 //Función que orrige saltos de nivel en encabezados usando aria-level así no cambia el componente para no romper el estilo de la página
@@ -1055,6 +1061,7 @@ function procesarNivelesEncabezados() {
     } else {
         console.log("Niveles de encabezado: estructura correcta, sin saltos detectados");
     }
+    return { corregidos };
 }
 
 // Función para tablas de datos sin nombre accesible
@@ -1133,27 +1140,43 @@ async function procesarTablas() {
     }
 
     console.log(`Tablas: ${procesadas} etiquetadas con IA, ${errores} errores`);
+    return { procesadas, errores };
 }
 
 async function iniciarAsistente(){
     console.log("Iniciando asistente de accesibilidad...");
-    
-    const textoResumen = await generarResumen();
-    insertarResumen(textoResumen);
+
+    const configuracion = await obtenerConfiguracion();
     
     console.log("Procesando página con IA...");
     
     try {
-        await procesarImagenesSinAlt();
-        await procesarSVGsSinAlt();
+        const resImagenes  = await procesarImagenesSinAlt();
+        const resSVGs        = await procesarSVGsSinAlt();
+        const resEncabezados = procesarNivelesEncabezados();
+        const resNavs        = await procesarNav();
+        const resTablas      = await procesarTablas();
+        const resInteractivos = await procesarElementosInteractivos();
+        const resFormularios  = await procesarFormularios();
+        const resEtiquetas   = await procesarEtiquetasInsuficientes();
+        const resCampos      = await procesarCamposObligatorios();
 
-        procesarNivelesEncabezados();
-        await procesarNav();
-        await procesarTablas();
-        await procesarElementosInteractivos();
-        await procesarFormularios();
-        await procesarEtiquetasInsuficientes();
-        await procesarCamposObligatorios();
+        //Se agregan los resultados de todas las funciones para el informe del resumen
+        const resultados = {
+            imagenesAlt:              resImagenes?.procesadas   || 0,
+            svgsDesc:                 resSVGs?.procesados       || 0,
+            interactivos:             resInteractivos?.procesados || 0,
+            formulariosCampos:        resFormularios?.procesados || 0,
+            insuficientesImagenes:    resEtiquetas?.corregidosImagenes || 0,
+            insuficientesInteractivos: resEtiquetas?.corregidosInteractivos || 0,
+            camposObligatorios:       resCampos?.camposMejorados || 0,
+            encabezados:              resEncabezados?.corregidos || 0,
+            navs:                     resNavs?.procesadas        || 0,
+            tablas:                   resTablas?.procesadas      || 0
+        };
+
+        const textoResumen = await generarResumen(configuracion, resultados);
+        insertarResumen(textoResumen);
         
         console.log("Procesamiento completo. La página ahora es más accesible.");
     } catch (error) {

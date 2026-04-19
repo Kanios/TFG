@@ -322,51 +322,39 @@ async function generarResumenIA(pageInfo) {
     }
 
     const prompt = `Eres un experto en accesibilidad web. Genera un resumen descriptivo de esta página para ser leído por un lector de pantalla al inicio.
-    - Título de la página: ${pageInfo.titulo}
-    - URL: ${pageInfo.url}
-    - Encabezado principal (h1): ${pageInfo.encabezadoPrincipal}
-    - Meta descripción: ${pageInfo.descripcionMeta || "no disponible"}
-    - Otros encabezados: ${pageInfo.headings}
-    - Primeros párrafos: ${pageInfo.parrafos}
-    - Menú de navegación: ${pageInfo.tieneNav ? "Sí — " + pageInfo.navText : "No detectado"}
-    - Colores detectados: ${pageInfo.colores}
-    - Estadísticas: ${pageInfo.stats.links} enlaces, ${pageInfo.stats.buttons} botones, ${pageInfo.stats.imagenes} imágenes
 
-    El resumen debe cubrir en este orden de prioridad:
-    1. Propósito principal de la página en una frase (ejemplo: "Página de compra de billetes de tren de Renfe")
-    2. Estructura de navegación disponible y sus opciones principales
-    3. Organización general del contenido
-    4. Esquema de colores en lenguaje natural, sin valores RGB (ejemplo: "fondo blanco con botones azules")
+        Datos de la página:
+        - Título: ${pageInfo.titulo}
+        - URL: ${pageInfo.url}
+        - Idioma: ${pageInfo.idioma}
+        ${pageInfo.encabezadoPrincipal ? `- Encabezado principal (h1): ${pageInfo.encabezadoPrincipal}` : ""}
+        - Meta descripción: ${pageInfo.descripcionMeta || "no disponible"}
+        ${pageInfo.colores ? `- Colores de la página: ${pageInfo.colores}` : ""}
+        ${pageInfo.formularios ? `- Formularios detectados: ${pageInfo.formularios}` : ""}
+        - Informe de accesibilidad: ${pageInfo.informeMejoras}
 
-    Reglas:
-    - Máximo 80 palabras en total
-    - Sin listas, sin viñetas, solo texto continuo
-    - Sin introducciones como "Esta página..." — empieza directamente con el propósito
-    - Usa lenguaje claro y directo, pensado para ser escuchado por usuarios de lectores de pantalla
+        El resumen debe incluir exactamente estas tres partes, en este orden:
+        1. Una sola frase que describa el propósito de la página en lenguaje natural (ejemplo: "Página de compra de billetes de tren de Renfe").
+        2. Si hay formularios, una frase con la información de formularios proporcionada. Si no hay formularios, omite esta parte.
+        3. El informe de accesibilidad tal como se proporciona, sin modificarlo.
+        ${pageInfo.colores ? "4. El esquema de colores en lenguaje natural, sin valores RGB (ejemplo: \"fondo blanco con botones azules\")." : ""}
 
-    Responde directamente con el resumen, sin formato adicional.`;
+        Reglas:
+        - Máximo 80 palabras en total
+        - Sin listas, sin viñetas, solo texto continuo
+        - Sin introducciones como "Esta página..." — empieza directamente con el propósito
+        - Usa lenguaje claro y directo, pensado para ser escuchado por usuarios de lectores de pantalla
 
-    const requestBody = {
-        contents: [{
-            parts: [{ text: prompt }]
-        }]
-    };
+        Responde directamente con el resumen, sin formato adicional.`;
+
+    const requestBody = { contents: [{ parts: [{ text: prompt }] }] };
 
     try {
         const response = await fetch(
             `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(requestBody)
-            }
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) }
         );
-
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Error de Gemini API: ${error}`);
-        }
-
+        if (!response.ok) throw new Error(`Error de Gemini API: ${await response.text()}`);
         const data = await response.json();
         return data.candidates[0].content.parts[0].text.trim();
     } catch (error) {
@@ -377,6 +365,17 @@ async function generarResumenIA(pageInfo) {
 
 chrome.runtime.onInstalled.addListener(() => {
     console.log("Asistente de accesibilidad web instalado");
+
+    //Configuración por defecto de funcionalidades
+    chrome.storage.sync.get("configuracion", (data) => {
+        if (!data.configuracion) {
+            chrome.storage.sync.set({
+                configuracion: {
+                    mostrarColores: true
+                }
+            });
+        }
+    });
     
     if (!CONFIG.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY === "TU_API_KEY_AQUI") {
         console.warn("API Key no configurada en config.js");
