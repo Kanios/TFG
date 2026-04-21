@@ -115,7 +115,7 @@ async function generarAltTextIA(imagenBase64, contexto) {
     - Si es un logotipo, menciona el nombre de la marca
 
     Ejemplos de buenos alt text: "Gráfico de ventas trimestrales 2024", "Portada del libro El Quijote", "Ir a la página de inicio", "Logotipo de TechCorp"
-    Responde SOLO con el alt text, máximo 15 palabras, sin comillas.`;
+    Responde SOLO con el alt text, máximo 10 palabras, sin comillas.`;
 
     const requestBody = {
         contents: [{
@@ -296,7 +296,7 @@ async function generarAriaLabelTablaIA(tablaInfo, contexto) {
     Reglas:
     - Describe qué datos contiene la tabla, no su estructura
     - Ejemplos de buenos aria-label: "Resultados de búsqueda de vuelos", "Comparativa de precios de tarifas", "Horario de clases del primer semestre", "Listado de empleados por departamento"
-    - Responde SOLO con el aria-label, máximo 6 palabras, sin comillas.`;
+    - Responde SOLO con el aria-label, máximo 8 palabras, sin comillas.`;
 
     const requestBody = { contents: [{ parts: [{ text: prompt }] }] };
 
